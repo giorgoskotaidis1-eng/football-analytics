@@ -326,7 +326,7 @@ export default function TeamsPage() {
                     </svg>
                   </div>
                   <div className="text-center">
-                    <p className="text-base font-semibold text-slate-700 dark:text-slate-300 mb-1">No teams yet</p>
+                    <p className="text-base font-semibold text-slate-700 dark:text-slate-300 mb-1">Δεν υπάρχουν ομάδες ακόμα</p>
                     <p className="text-sm text-slate-600 dark:text-slate-500">Πρόσθεσε την πρώτη σου ομάδα για να ξεκινήσεις</p>
                   </div>
                   <button

@@ -11,6 +11,8 @@
     "setup-env-mac": "bash scripts/create-env-mac.sh",
     "check-env": "node scripts/check-env.js",
     "check-users": "node scripts/check-users.js",
+    "test-db": "node scripts/test-database.js",
+    "full-setup": "node scripts/full-setup.js",
     "migrate": "prisma migrate dev",
     "create-user": "node scripts/create-default-user.js"
   },

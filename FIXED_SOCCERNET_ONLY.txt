@@ -1,0 +1,23 @@
+========================================
+FIXED - SOCCERNET VIDEOS ONLY!
+========================================
+
+CHANGES:
+✅ Searches ONLY in datasets/soccernet_data/
+✅ IGNORES all other folders (Downloads, Documents, etc.)
+✅ Uses password: s0cc3rn3t for protected videos
+✅ Opens password-protected videos with ffmpeg
+
+========================================
+TRAINING STARTED:
+========================================
+
+The training is now running with:
+- ONLY SoccerNet videos
+- Password handling
+- Proper video extraction
+
+Check progress in: training-output.log
+
+========================================
+

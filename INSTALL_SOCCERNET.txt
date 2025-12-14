@@ -1,0 +1,22 @@
+========================================
+INSTALL SOCCERNET - COPY PASTE ONE BY ONE
+========================================
+
+STEP 1: Install SoccerNet
+--------------------------
+venv\Scripts\python.exe -m pip install SoccerNet
+
+(Wait for it to finish, then run STEP 2)
+
+
+STEP 2: Verify Installation
+----------------------------
+venv\Scripts\python.exe -c "from SoccerNet.Downloader import SoccerNetDownloader; print('SoccerNet: OK')"
+
+(Should print "SoccerNet: OK" if successful)
+
+
+========================================
+IMPORTANT: Run commands ONE AT A TIME!
+========================================
+

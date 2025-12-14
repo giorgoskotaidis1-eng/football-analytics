@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #050918;
+  --card: #0f172a;
+  --text: #e8edf5;
+  --muted: #9aa4b5;
+  --primary: #3b82f6;
+  --accent: #f6ad55;
+  --border: #111a2e;
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card-foreground: var(--text);
+  --primary-foreground: #ffffff;
+  --secondary: var(--card);
+  --secondary-foreground: var(--text);
+  --muted-foreground: var(--muted);
+  --accent-foreground: #ffffff;
+  --input: var(--border);
+  --ring: var(--primary);
+}
+
+.dark {
+  --bg: #050918;
+  --card: #0f172a;
+  --text: #e8edf5;
+  --muted: #9aa4b5;
+  --primary: #3b82f6;
+  --accent: #f6ad55;
+  --border: #111a2e;
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card-foreground: var(--text);
+  --primary-foreground: #ffffff;
+  --secondary: var(--card);
+  --secondary-foreground: var(--text);
+  --muted-foreground: var(--muted);
+  --accent-foreground: #ffffff;
+  --input: var(--border);
+  --ring: var(--primary);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.touch-manipulation {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iPad and Tablet Optimizations */
+@media (min-width: 768px) and (max-width: 1024px) {
+  button, a, input, select, textarea {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* Better spacing for iPad */
+  .space-y-4 > * + * {
+    margin-top: 1.5rem;
+  }
+  
+  /* Larger touch targets for interactive elements */
+  [role="button"], .cursor-pointer {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* iPad Pro and larger tablets */
+@media (min-width: 1024px) and (max-width: 1366px) {
+  /* Optimize for iPad Pro landscape */
+  .grid {
+    gap: 1.5rem;
+  }
+}
+
+.no-select {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.subtle-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.subtle-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.subtle-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 3px;
+}
+
+.subtle-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}

@@ -1,0 +1,90 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Next.js
+/.next/
+/out/
+next-env.d.ts
+
+# Production
+/build
+/dist
+
+# Misc
+.DS_Store
+*.pem
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Debug
+.vscode/
+.idea/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Database
+*.db
+*.db-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+football_ai/__pycache__/
+*.pt
+*.pth
+*.onnx
+
+# Video uploads
+uploads/
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# YOLOv8 models (can be large)
+*.weights
+yolov8*.pt
+runs/
+football_models/
+
+# Datasets (can be very large)
+datasets/
+ai_pipeline/datasets/
+
+# Training outputs
+training-output.log
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Prisma
+prisma/migrations/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~

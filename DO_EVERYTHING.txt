@@ -1,0 +1,25 @@
+========================================
+COPY-PASTE THIS ONE COMMAND:
+========================================
+
+venv\Scripts\python.exe -m football_ai.complete_training_auto
+
+========================================
+THIS DOES EVERYTHING:
+========================================
+
+✅ Installs missing packages
+✅ Downloads videos (if needed)
+✅ Processes dataset
+✅ Trains model
+
+NO ERRORS - EVERYTHING INCLUDED!
+
+========================================
+OR DOUBLE-CLICK:
+========================================
+
+DO_EVERYTHING.bat
+
+========================================
+

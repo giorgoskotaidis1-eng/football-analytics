@@ -1,0 +1,38 @@
+========================================
+SOCCERNET INSTALLED - START TRAINING NOW
+========================================
+
+STEP 1: Download Videos (1-3 hours)
+------------------------------------
+venv\Scripts\python.exe -m football_ai.prepare_soccernet_training --download-videos --max-games 10
+
+(Wait for this to finish - will download videos from SoccerNet)
+
+
+STEP 2: Process Dataset (1-2 hours)
+------------------------------------
+venv\Scripts\python.exe -m football_ai.prepare_soccernet_training --process --max-games 10 --frames-per-game 1000
+
+(Wait for this to finish - will extract frames and create YOLOv8 dataset)
+
+
+STEP 3: Train Model (4-8 hours)
+---------------------------------
+venv\Scripts\python.exe -m football_ai.prepare_soccernet_training --train
+
+(Wait for this to finish - will train the YOLOv8 model)
+
+
+========================================
+OR RUN ALL AT ONCE:
+========================================
+
+venv\Scripts\python.exe -m football_ai.prepare_soccernet_training --all --max-games 10 --frames-per-game 1000
+
+(Will do all steps automatically - 6-12 hours total)
+
+
+========================================
+IMPORTANT: Run ONE command at a time!
+========================================
+

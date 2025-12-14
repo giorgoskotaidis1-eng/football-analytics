@@ -1,0 +1,264 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String?
+  role      String?  // e.g. "head_coach", "analyst", "scout"
+  passwordHash String
+  emailVerified Boolean @default(false)
+  phone        String?
+  phoneVerified Boolean @default(false)
+  profilePicture String? // URL to profile picture
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Billing / subscription (skeleton)
+  subscriptions Subscription[]
+
+  // Auth tokens (skeleton)
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  phoneVerificationCodes  PhoneVerificationCode[]
+
+  // Relations
+  comments                Comment[]
+  sentMessages            Message[]  @relation("SentMessages")
+  receivedMessages        Message[]  @relation("ReceivedMessages")
+  watchlist               WatchlistPlayer[]
+}
+
+model Team {
+  id        Int      @id @default(autoincrement())
+  name      String
+  league    String?
+  style     String?  // e.g. "High press", "Fast transitions"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  players   Player[]
+  homeGames Match[]  @relation("HomeTeam")
+  awayGames Match[]  @relation("AwayTeam")
+  lineups   MatchLineup[]
+}
+
+model Player {
+  id        Int      @id @default(autoincrement())
+  name      String
+  slug      String   @unique
+  position  String
+  age       Int?
+  club      String?
+  nationality String?
+  foot      String?  // "Right", "Left", "Both"
+  number    Int?     // Jersey number
+
+  // Simple season metrics (per 90 or totals)
+  goals                    Int?    @default(0)
+  assists                  Int?    @default(0)
+  xg                       Float?  @default(0)
+  xag                      Float?  @default(0)
+  shotsPer90               Float?  @default(0)
+  keyPassesPer90           Float?  @default(0)
+  pressuresPer90           Float?  @default(0)
+  progressivePassesPer90   Float?  @default(0)
+  carriesIntoFinalThirdPer90 Float? @default(0)
+  defensiveDuelsWonPer90   Float?  @default(0)
+
+  teamId    Int?
+  team      Team?    @relation(fields: [teamId], references: [id])
+
+  matchEvents MatchEvent[]
+  watchlist   WatchlistPlayer[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Match {
+  id        Int      @id @default(autoincrement())
+  slug      String   @unique
+  competition String
+  venue     String?
+  date      DateTime
+
+  // Teams can be optional - if not in system, use opponent names
+  homeTeamId Int?
+  awayTeamId Int?
+  homeTeam   Team?    @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam   Team?    @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  
+  // Opponent names for teams not in the system
+  homeTeamName String?  // Name of home team if not registered
+  awayTeamName String?  // Name of away team if not registered
+
+  scoreHome Int?     @default(0)
+  scoreAway Int?     @default(0)
+  xgHome    Float?   @default(0)
+  xgAway    Float?   @default(0)
+  shotsHome Int?     @default(0)
+  shotsAway Int?     @default(0)
+  possessionHome Float? @default(0) // Possession percentage (0-100)
+  possessionAway Float? @default(0)
+
+  videoPath String? // Path to video file (relative to project root)
+
+  events    MatchEvent[]
+  lineups   MatchLineup[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Match events for analytics: shots, passes, touches, etc.
+model MatchEvent {
+  id        Int      @id @default(autoincrement())
+  matchId   Int
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  // Event type: "shot", "pass", "touch", "tackle", "foul", etc.
+  type      String
+  
+  // Team: "home" or "away"
+  team      String
+  
+  // Player who performed the action (optional)
+  playerId  Int?
+  player    Player?  @relation(fields: [playerId], references: [id])
+
+  // Coordinates on pitch (0-100, where 0,0 is top-left, 100,100 is bottom-right)
+  x         Float?   // Horizontal position (0 = left touchline, 100 = right touchline)
+  y         Float?   // Vertical position (0 = attacking end, 100 = defending end)
+
+  // Event-specific data (JSON string for flexibility)
+  metadata  String?  // e.g., {"shotType": "open_play", "bodyPart": "foot", "outcome": "goal"}
+
+  // Time in match (minutes)
+  minute    Int?
+  
+  // Calculated xG for shots
+  xg        Float?   @default(0)
+
+  createdAt DateTime @default(now())
+}
+
+// Simple subscription model for billing skeleton.
+// Your payment integration can store provider IDs and sync status here.
+model Subscription {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  user              User     @relation(fields: [userId], references: [id])
+
+  plan              String   // e.g. "free", "pro_monthly", "elite" (can be enum later)
+  status            String   @default("active") // e.g. "active", "past_due", "canceled"
+  currentPeriodEnd  DateTime?
+
+  provider          String?  // e.g. "stripe"
+  providerCustomerId    String?
+  providerSubscriptionId String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model EmailVerificationToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model PhoneVerificationCode {
+  id        Int      @id @default(autoincrement())
+  code      String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// Messaging skeleton: simple internal messages between staff.
+model MessageThread {
+  id        Int      @id @default(autoincrement())
+  subject   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages  Message[]
+}
+
+model Message {
+  id          Int      @id @default(autoincrement())
+  threadId    Int
+  thread      MessageThread @relation(fields: [threadId], references: [id])
+  fromUserId  Int
+  fromUser    User     @relation("SentMessages", fields: [fromUserId], references: [id])
+  toUserId    Int
+  toUser      User     @relation("ReceivedMessages", fields: [toUserId], references: [id])
+  body        String
+  createdAt   DateTime @default(now())
+  readAt      DateTime?
+}
+
+// Comments skeleton: attach staff comments to players or matches.
+model Comment {
+  id          Int      @id @default(autoincrement())
+  authorId    Int
+  author      User     @relation(fields: [authorId], references: [id])
+  targetType  String   // e.g. "player" or "match"
+  targetSlug  String
+  body        String
+  createdAt   DateTime @default(now())
+}
+
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model MatchLineup {
+  id        Int      @id @default(autoincrement())
+  matchId   Int
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  teamId    Int
+  team      Team     @relation(fields: [teamId], references: [id])
+  formation String   // e.g. "4-4-2", "4-3-3"
+  positions String   // JSON array of {playerId, x, y}
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([matchId, teamId])
+}
+
+// Player watchlist for scouting
+model WatchlistPlayer {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  playerId  Int
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  notes     String?  // Optional notes for scouting
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, playerId])
+  @@index([userId])
+  @@index([playerId])
+}

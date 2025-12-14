@@ -1,0 +1,19 @@
+ΟΔΗΓΙΕΣ ΓΙΑ ΤΟ .env FILE:
+
+1. Άνοιξε ένα νέο αρχείο κειμένου (Notepad) στον φάκελο:
+   C:\Users\troll\CascadeProjects\football-analytics-app
+
+2. Γράψε μέσα αυτά τα 2 γραμμές:
+   
+DATABASE_URL="file:./prisma/dev.db"
+JWT_SECRET="your-secret-key-change-this-in-production"
+
+3. Αποθήκευσε το αρχείο με όνομα: .env
+   (ΣΗΜΑΝΤΙΚΟ: Το όνομα πρέπει να είναι ακριβώς ".env" - με την τελεία μπροστά!)
+
+4. Μετά τρέξε στο Command Prompt:
+   npx prisma migrate dev --name add_message_comment_relations
+
+ΑΛΛΙΩΣ:
+Απλά κάνε διπλό κλικ στο create-env-and-migrate.bat που έφτιαξα!
+

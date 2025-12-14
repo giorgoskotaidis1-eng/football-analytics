@@ -1,0 +1,38 @@
+========================================
+QUICK START - COPY PASTE THIS
+========================================
+
+OPTION 1: PowerShell (with .\ prefix)
+--------------------------------------
+.\venv\Scripts\python.exe -m football_ai.prepare_soccernet_training --all --max-games 10 --frames-per-game 1000
+
+
+OPTION 2: CMD (Command Prompt)
+--------------------------------------
+venv\Scripts\python.exe -m football_ai.prepare_soccernet_training --all --max-games 10 --frames-per-game 1000
+
+
+OPTION 3: Batch File in CMD
+--------------------------------------
+start-training-properly.bat
+
+
+OPTION 4: Batch File in PowerShell
+--------------------------------------
+.\start-training-properly.bat
+
+
+========================================
+VERIFY IT'S RUNNING:
+========================================
+
+1. Open Task Manager (Ctrl+Shift+Esc)
+2. Look for "python.exe"
+3. Should show CPU usage
+
+OR check directories:
+- dir datasets\football_yolo
+- dir football_models\football_soccernet
+
+========================================
+

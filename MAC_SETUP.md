@@ -28,12 +28,34 @@ pip3 install -r requirements.txt
 touch .env
 ```
 
-Πρόσθεσε τις απαραίτητες μεταβλητές (αν έχεις):
+**ΠΡΟΣΟΧΗ:** Πρέπει να προσθέσεις το `DATABASE_URL`! Άνοιξε το `.env` file:
+
+```bash
+nano .env
+# ή
+open -e .env
+# ή
+code .env  # αν έχεις VS Code
 ```
-DATABASE_URL="file:./dev.db"
-NEXTAUTH_SECRET="your-secret-here"
+
+Πρόσθεσε αυτές τις μεταβλητές (OBLIGATORY):
+
+```env
+DATABASE_URL="file:./prisma/dev.db"
+NEXTAUTH_SECRET="change-this-to-a-random-string-in-production"
 NEXTAUTH_URL="http://localhost:3000"
 ```
+
+**Γρήγορη λύση - Copy/Paste αυτό:**
+```bash
+cat > .env << 'EOF'
+DATABASE_URL="file:./prisma/dev.db"
+NEXTAUTH_SECRET="dev-secret-key-change-in-production"
+NEXTAUTH_URL="http://localhost:3000"
+EOF
+```
+
+Αντιγράψε-επικόλλησε το παραπάνω block στο Terminal.
 
 ## 4. Setup Database
 

@@ -13,6 +13,7 @@
     "check-users": "node scripts/check-users.js",
     "test-db": "node scripts/test-database.js",
     "full-setup": "node scripts/full-setup.js",
+    "fix-password": "node scripts/fix-user-password.js",
     "migrate": "prisma migrate dev",
     "create-user": "node scripts/create-default-user.js"
   },

@@ -21,7 +21,19 @@ async function createDefaultUser() {
     });
 
     if (existing) {
-      console.log('✅ User already exists:', email);
+      console.log('⚠️  User already exists:', email);
+      console.log('   But password might be wrong. Updating password...');
+      
+      // Update password to ensure it works
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          passwordHash: hashPassword(password),
+          emailVerified: true,
+        },
+      });
+      
+      console.log('✅ Password updated!');
       console.log('   You can login with:');
       console.log('   Email:', email);
       console.log('   Password:', password);

@@ -562,7 +562,7 @@ export default function MatchesPage() {
               <div className="mt-4 text-center text-sm text-slate-400">
                 <div className="inline-flex items-center gap-2">
                   <div className="w-4 h-4 border-2 border-slate-500 border-t-transparent rounded-full animate-spin"></div>
-                  Loading matches...
+                  Φόρτωση αγώνων...
                 </div>
               </div>
             )}

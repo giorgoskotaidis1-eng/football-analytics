@@ -65,7 +65,16 @@ npx prisma generate
 
 # Run migrations (αν χρειάζεται)
 npx prisma migrate dev
+
+# Δημιούργησε default user για login
+npm run create-user
 ```
+
+**⚠️ IMPORTANT:** Μετά το `npm run create-user`, θα δημιουργηθεί ένας default user:
+- **Email:** `admin@football.com`
+- **Password:** `admin123`
+
+Μπορείς να συνδεθείς με αυτά τα credentials. **Αλλάξε το password μετά το πρώτο login!**
 
 ## 5. Ξεκίνα το Development Server
 

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "setup-env": "node create-env.js",
-    "migrate": "prisma migrate dev"
+    "migrate": "prisma migrate dev",
+    "create-user": "node scripts/create-default-user.js"
   },
   "dependencies": {
     "@ffprobe-installer/ffprobe": "^2.1.2",

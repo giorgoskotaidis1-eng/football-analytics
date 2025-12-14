@@ -22,14 +22,24 @@ pip3 install -r requirements.txt
 
 ## 3. Δημιουργία .env File
 
+**ΑΥΤΟΜΑΤΗ ΛΥΣΗ (Προτεινόμενη):**
+```bash
+npm run setup-env-mac
+```
+
+Αυτό θα δημιουργήσει το `.env` file αυτόματα με όλες τις απαραίτητες μεταβλητές.
+
+---
+
+**MANUAL ΛΥΣΗ (αν το script δεν δουλεύει):**
+
 Δημιούργησε ένα `.env` file στο root directory:
 
 ```bash
 touch .env
 ```
 
-**ΠΡΟΣΟΧΗ:** Πρέπει να προσθέσεις το `DATABASE_URL`! Άνοιξε το `.env` file:
-
+Άνοιξε το `.env` file:
 ```bash
 nano .env
 # ή
@@ -42,11 +52,11 @@ code .env  # αν έχεις VS Code
 
 ```env
 DATABASE_URL="file:./prisma/dev.db"
-NEXTAUTH_SECRET="change-this-to-a-random-string-in-production"
+NEXTAUTH_SECRET="dev-secret-key-change-in-production"
 NEXTAUTH_URL="http://localhost:3000"
 ```
 
-**Γρήγορη λύση - Copy/Paste αυτό:**
+**Ή Copy/Paste αυτό στο Terminal:**
 ```bash
 cat > .env << 'EOF'
 DATABASE_URL="file:./prisma/dev.db"
@@ -54,8 +64,6 @@ NEXTAUTH_SECRET="dev-secret-key-change-in-production"
 NEXTAUTH_URL="http://localhost:3000"
 EOF
 ```
-
-Αντιγράψε-επικόλλησε το παραπάνω block στο Terminal.
 
 ## 4. Setup Database
 

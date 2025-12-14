@@ -9,6 +9,7 @@
     "lint": "eslint",
     "setup-env": "node create-env.js",
     "setup-env-mac": "bash scripts/create-env-mac.sh",
+    "check-env": "node scripts/check-env.js",
     "migrate": "prisma migrate dev",
     "create-user": "node scripts/create-default-user.js"
   },

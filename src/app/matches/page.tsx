@@ -596,8 +596,8 @@ export default function MatchesPage() {
                             </svg>
                           </div>
                           <div>
-                            <p className="text-base font-semibold text-slate-300 mb-1">No matches yet</p>
-                            <p className="text-sm text-slate-500">Create your first match to get started</p>
+                            <p className="text-base font-semibold text-slate-300 mb-1">Δεν υπάρχουν αγώνες ακόμα</p>
+                            <p className="text-sm text-slate-500">Δημιούργησε τον πρώτο σου αγώνα για να ξεκινήσεις</p>
                           </div>
                           <button
                             onClick={() => setShowCreateMatch(true)}

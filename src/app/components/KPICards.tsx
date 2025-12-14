@@ -78,7 +78,7 @@ export function KPICards({ analytics, homeTeamName, awayTeamName, matchDuration 
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
         {[1, 2, 3, 4].map((i) => (
           <div key={i} className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-            <p className="text-[10px] text-white/70 mb-2">Loading...</p>
+            <p className="text-[10px] text-white/70 mb-2">Φόρτωση...</p>
             <p className="text-xl font-semibold text-white/50">—</p>
           </div>
         ))}

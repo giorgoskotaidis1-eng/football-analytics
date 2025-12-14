@@ -327,7 +327,7 @@ export default function TeamsPage() {
                   </div>
                   <div className="text-center">
                     <p className="text-base font-semibold text-slate-700 dark:text-slate-300 mb-1">No teams yet</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-500">Add your first team to get started</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-500">Πρόσθεσε την πρώτη σου ομάδα για να ξεκινήσεις</p>
                   </div>
                   <button
                     onClick={() => setShowAddTeam(true)}

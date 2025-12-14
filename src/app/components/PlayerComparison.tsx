@@ -235,7 +235,7 @@ export function PlayerComparison({ matchId, players, events, analytics }: Player
   if (playerMetrics.length === 0) {
     return (
       <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg text-center text-white/50 text-sm">
-        No data
+        Δεν υπάρχουν δεδομένα
       </div>
     );
   }
@@ -593,7 +593,7 @@ export function PlayerComparison({ matchId, players, events, analytics }: Player
   if (playerMetrics.length === 0) {
     return (
       <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg text-center text-white/50 text-sm">
-        No data
+        Δεν υπάρχουν δεδομένα
       </div>
     );
   }

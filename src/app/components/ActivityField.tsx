@@ -237,7 +237,7 @@ export function ActivityField({
             />
           ) : (
             <div className="flex h-[520px] items-center justify-center text-[11px] text-white/50">
-              No events for home team
+              Δεν υπάρχουν events για την ομάδα γηπέδου
             </div>
           )}
         </div>
@@ -257,7 +257,7 @@ export function ActivityField({
             />
           ) : (
             <div className="flex h-[520px] items-center justify-center text-[11px] text-white/50">
-              No events for away team
+              Δεν υπάρχουν events για την ομάδα φιλοξενούμενη
             </div>
           )}
         </div>

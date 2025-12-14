@@ -226,7 +226,7 @@ export function MatchTimeline({
       <div className="space-y-2 max-h-64 overflow-y-auto">
         {sortedEvents.length === 0 ? (
           <div className="text-center py-8 text-slate-500 text-[11px]">
-            No events recorded yet. Add events to see them on the timeline.
+            Δεν έχουν καταγραφεί events ακόμα. Προσθέστε events για να τα δείτε στο timeline.
           </div>
         ) : (
           sortedEvents.map((event) => {

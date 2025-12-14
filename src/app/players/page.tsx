@@ -742,8 +742,8 @@ export default function PlayersPage() {
                             </svg>
                           </div>
                           <div>
-                            <p className="text-base font-semibold text-slate-300 mb-1">No players found</p>
-                            <p className="text-sm text-slate-500">No players match &quot;{searchQuery}&quot;</p>
+                            <p className="text-base font-semibold text-slate-300 mb-1">Δεν βρέθηκαν παίκτες</p>
+                            <p className="text-sm text-slate-500">Κανένας παίκτης δεν ταιριάζει με &quot;{searchQuery}&quot;</p>
                           </div>
                         </div>
                       </td>
@@ -758,8 +758,8 @@ export default function PlayersPage() {
                             </svg>
                           </div>
                           <div>
-                            <p className="text-base font-semibold text-slate-300 mb-1">No players yet</p>
-                            <p className="text-sm text-slate-500">Add your first player to get started</p>
+                            <p className="text-base font-semibold text-slate-300 mb-1">Δεν υπάρχουν παίκτες ακόμα</p>
+                            <p className="text-sm text-slate-500">Πρόσθεσε τον πρώτο σου παίκτη για να ξεκινήσεις</p>
                           </div>
                           <button
                             onClick={() => setShowAddPlayer(true)}

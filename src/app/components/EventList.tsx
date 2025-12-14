@@ -132,7 +132,7 @@ export function EventList({
   if (events.length === 0) {
     return (
       <div className="text-center py-8">
-        <p className="text-slate-400 text-sm">No events available</p>
+        <p className="text-slate-400 text-sm">Δεν υπάρχουν διαθέσιμα events</p>
       </div>
     );
   }
@@ -179,7 +179,7 @@ export function EventList({
       <div className="flex flex-col gap-2 flex-1 overflow-y-auto subtle-scrollbar">
         {filteredEvents.length === 0 ? (
           <div className="text-center py-8">
-            <p className="text-slate-400 text-sm">No events in this category</p>
+            <p className="text-slate-400 text-sm">Δεν υπάρχουν events σε αυτή την κατηγορία</p>
           </div>
         ) : (
           filteredEvents.map((ev) => {

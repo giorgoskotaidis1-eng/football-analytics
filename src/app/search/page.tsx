@@ -70,9 +70,9 @@ export default function SearchPage() {
             <p className="text-[10px] text-slate-500">{players.length} players • filtered</p>
           </div>
           <div className="space-y-2">
-            {loading && <p className="text-[11px] text-slate-500">Loading players...</p>}
+            {loading && <p className="text-[11px] text-slate-500">Φόρτωση παικτών...</p>}
             {!loading && players.length === 0 && (
-              <p className="text-[11px] text-slate-500">No players found.</p>
+              <p className="text-[11px] text-slate-500">Δεν βρέθηκαν παίκτες.</p>
             )}
             {players.map((p) => (
               <div

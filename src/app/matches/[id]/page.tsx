@@ -25,6 +25,7 @@ const Spotlight = dynamic(() => import("@/app/components/Spotlight").then(m => (
 const MatchDynamics = dynamic(() => import("@/app/components/analytics/MatchDynamics").then(m => ({ default: m.MatchDynamics })), { ssr: false });
 const AnalysisNotes = dynamic(() => import("@/app/components/AnalysisNotes").then(m => ({ default: m.AnalysisNotes })), { ssr: false });
 const KPICards = dynamic(() => import("@/app/components/KPICards").then(m => ({ default: m.KPICards })), { ssr: false });
+const MatchSummary = dynamic(() => import("@/app/components/MatchSummary").then(m => ({ default: m.MatchSummary })), { ssr: false });
 
 
 type TabKey =
@@ -631,6 +632,61 @@ export default function MatchDetailPage() {
         </div>
 
         <div className="space-y-4 p-4 md:p-6">
+          {activeTab === "summary" && (
+            <>
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2 mb-6">
+                {match && (
+                  <>
+                    <VideoUpload
+                      matchId={match.id}
+                      homeTeamId={match.homeTeamId}
+                      awayTeamId={match.awayTeamId}
+                      homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
+                      awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
+                      onAnalysisComplete={() => {
+                        fetch(`/api/matches/${match.id}/events`)
+                          .then((r) => r.json())
+                          .then((d) => {
+                            if (d.ok && d.events) setEvents(d.events);
+                          });
+                        fetchAnalytics();
+                      }}
+                    />
+                    <MatchEventForm
+                      matchId={match.id}
+                      homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
+                      awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
+                      players={players}
+                      onEventAdded={() => {
+                        fetch(`/api/matches/${match.id}/events`)
+                          .then((r) => r.json())
+                          .then((d) => {
+                            if (d.ok && d.events) setEvents(d.events);
+                          });
+                        fetchAnalytics();
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+
+              {/* Beautiful Summary Component */}
+              <Suspense fallback={<div className="h-96 animate-pulse bg-slate-900 rounded-2xl" />}>
+                <MatchSummary
+                  match={match}
+                  events={events}
+                  analytics={analytics}
+                  xgTimelineData={xgTimelineData}
+                  shotMapData={shotMapData}
+                  homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
+                  awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
+                />
+              </Suspense>
+            </>
+          )}
+
+          {/* OLD SUMMARY - REMOVED - Keeping for reference
           {activeTab === "summary" && (
             <>
               <section className="grid gap-4 md:gap-6 md:grid-cols-3">

@@ -580,19 +580,29 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 text-[11px] shadow-lg">
-      <div className="flex items-center justify-between">
-        <p className="font-medium text-white">{t("videoAnalysis")}</p>
+    <form onSubmit={handleSubmit} className="space-y-5 rounded-2xl border border-[#1a1f2e] bg-gradient-to-br from-[#0b1220] to-[#0f1620] p-6 text-[11px] shadow-xl">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-[#1a1f2e] pb-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30">
+            <svg className="h-5 w-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-white">{t("videoAnalysis")} (AI)</h3>
+          </div>
+        </div>
         <button
           type="button"
           onClick={() => setUseUrl(!useUrl)}
-          className="text-[10px] text-white/60 hover:text-white"
+          className="rounded-lg border border-[#1a1f2e] bg-[#0b1220] px-3 py-1.5 text-[10px] font-medium text-white/70 hover:bg-[#1a1f2e] hover:text-white transition-colors"
         >
           {useUrl ? t("uploadFile") : t("useUrl")}
         </button>
       </div>
 
-      <p className="text-[10px] text-white/50">
+      <p className="text-[10px] text-white/60 leading-relaxed">
         {t("videoUploadDescription")}
       </p>
 
@@ -603,11 +613,16 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
       )}
 
       {useUrl ? (
-        <div className="space-y-1.5">
-          <label className="text-white/70">{t("videoUrl")}</label>
+        <div className="space-y-2 rounded-lg border border-[#1a1f2e] bg-[#0b1220] p-4">
+          <label className="text-[10px] font-semibold text-white/80 flex items-center gap-2">
+            <svg className="h-4 w-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+            {t("videoUrl")}
+          </label>
           <input
             type="url"
-            className="h-8 w-full rounded-md border border-[#1a1f2e] bg-[#0b1220] px-2 text-[11px] text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/60"
+            className="h-10 w-full rounded-lg border border-[#1a1f2e] bg-[#0f1620] px-3 text-[11px] text-white outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30 transition-all"
             value={videoUrl}
             onChange={(e) => setVideoUrl(e.target.value)}
             placeholder={t("videoUrlPlaceholder")}
@@ -616,8 +631,13 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
         </div>
       ) : (
         <>
-          <div className="space-y-1.5">
-            <label className="text-white/70">{t("videoFile")}</label>
+          <div className="space-y-2 rounded-lg border border-[#1a1f2e] bg-[#0b1220] p-4">
+            <label className="text-[10px] font-semibold text-white/80 flex items-center gap-2">
+              <svg className="h-4 w-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              {t("videoFile")}
+            </label>
             <input
               id="video-file"
               type="file"
@@ -686,22 +706,22 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
                   }
                 }
               }}
-              className="h-8 w-full rounded-md border border-[#1a1f2e] bg-[#0b1220] px-2 text-[11px] text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/60 file:mr-4 file:rounded file:border-0 file:bg-emerald-500 file:px-2 file:py-1 file:text-[10px] file:font-semibold file:text-[#0b1220]"
+              className="h-10 w-full rounded-lg border border-[#1a1f2e] bg-[#0f1620] px-3 text-[11px] text-white outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30 transition-all file:mr-4 file:rounded-lg file:border-0 file:bg-gradient-to-r file:from-emerald-500 file:to-teal-500 file:px-4 file:py-2 file:text-[10px] file:font-semibold file:text-white file:cursor-pointer file:hover:from-emerald-400 file:hover:to-teal-400"
               required={!useUrl}
             />
-            <p className="text-[9px] text-white/50">{t("supportedFormats")}</p>
+            <p className="text-[9px] text-white/50 mt-1">{t("supportedFormats")}</p>
           </div>
 
           {/* Optional transcode option */}
-          <div className="flex items-center gap-2 rounded-lg border border-[#1a1f2e] bg-[#0b1220] p-2">
+          <div className="flex items-center gap-3 rounded-lg border border-[#1a1f2e] bg-[#0b1220] p-3">
             <input
               type="checkbox"
               id="transcode-option"
               checked={enableTranscode}
               onChange={(e) => setEnableTranscode(e.target.checked)}
-              className="h-3 w-3 rounded border-[#1a1f2e] bg-[#0b1220] text-emerald-500 focus:ring-1 focus:ring-emerald-500/60"
+              className="h-4 w-4 rounded border-[#1a1f2e] bg-[#0b1220] text-emerald-500 focus:ring-2 focus:ring-emerald-500/60 cursor-pointer"
             />
-            <label htmlFor="transcode-option" className="text-[10px] text-white/70 cursor-pointer">
+            <label htmlFor="transcode-option" className="text-[10px] text-white/80 cursor-pointer font-medium">
               Auto-convert to MP4 (H.264) for best compatibility
             </label>
           </div>
@@ -725,58 +745,89 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
       )}
 
       {/* Team Side Selection - MANDATORY */}
-      <div className={`space-y-1.5 rounded-lg border p-2 ${
+      <div className={`space-y-3 rounded-xl border p-4 transition-all ${
         leftSideTeam === null 
           ? "border-red-500/50 bg-red-500/5" 
           : "border-[#1a1f2e] bg-[#0b1220]"
       }`}>
         <div className="flex items-center justify-between">
-          <label className="text-[10px] font-medium text-white/80">
+          <label className="text-[11px] font-semibold text-white/90 flex items-center gap-2">
+            <svg className="h-4 w-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
             Ποια ομάδα είναι στο αριστερό μέρος του video? <span className="text-red-400">*</span>
           </label>
           {leftSideTeam !== null && (
-            <div className="text-[9px] text-emerald-400 font-medium">
-              ✓ Επιλεγμένο
+            <div className="flex items-center gap-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-1 text-[9px] text-emerald-400 font-semibold">
+              <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+              Επιλεγμένο
             </div>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="grid grid-cols-2 gap-3">
           <button
             type="button"
             onClick={() => setLeftSideTeam("home")}
-            className={`flex-1 rounded-md px-2 py-1.5 text-[10px] font-medium transition ${
+            className={`relative rounded-xl px-4 py-3 text-[11px] font-semibold transition-all ${
               leftSideTeam === "home"
-                ? "bg-emerald-500 text-[#0b1220] ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#0b1220]"
-                : "bg-[#1a1f2e] text-white/80 hover:bg-[#1f2535]"
+                ? "bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/30 ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#0b1220]"
+                : "bg-[#1a1f2e] text-white/80 hover:bg-[#1f2535] border border-[#1a1f2e]"
             }`}
           >
-            {homeTeamName || "Home"} (Αριστερά)
+            {leftSideTeam === "home" && (
+              <div className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-400">
+                <svg className="h-3 w-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              </div>
+            )}
+            <div className="text-center">
+              <div className="font-bold">{homeTeamName || "Home"}</div>
+              <div className="text-[9px] opacity-80 mt-0.5">(Αριστερά)</div>
+            </div>
           </button>
           <button
             type="button"
             onClick={() => setLeftSideTeam("away")}
-            className={`flex-1 rounded-md px-2 py-1.5 text-[10px] font-medium transition ${
+            className={`relative rounded-xl px-4 py-3 text-[11px] font-semibold transition-all ${
               leftSideTeam === "away"
-                ? "bg-emerald-500 text-[#0b1220] ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#0b1220]"
-                : "bg-[#1a1f2e] text-white/80 hover:bg-[#1f2535]"
+                ? "bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/30 ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#0b1220]"
+                : "bg-[#1a1f2e] text-white/80 hover:bg-[#1f2535] border border-[#1a1f2e]"
             }`}
           >
-            {awayTeamName || "Away"} (Αριστερά)
+            {leftSideTeam === "away" && (
+              <div className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-400">
+                <svg className="h-3 w-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              </div>
+            )}
+            <div className="text-center">
+              <div className="font-bold">{awayTeamName || "Away"}</div>
+              <div className="text-[9px] opacity-80 mt-0.5">(Αριστερά)</div>
+            </div>
           </button>
         </div>
         {leftSideTeam === null ? (
-          <p className="text-[9px] text-red-400 font-medium">
-            ⚠ Παρακαλώ επιλέξτε ποια ομάδα είναι στο αριστερό μέρος πριν το upload
-          </p>
+          <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/30 p-2.5">
+            <svg className="h-4 w-4 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <p className="text-[10px] text-red-400 font-medium">
+              Παρακαλώ επιλέξτε ποια ομάδα είναι στο αριστερό μέρος πριν το upload
+            </p>
+          </div>
         ) : (
-          <div className="space-y-1">
-            <p className="text-[9px] text-white/70">
-              Επιλέχθηκε: <span className="font-semibold text-white">
+          <div className="space-y-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3">
+            <p className="text-[10px] text-white/90 font-medium">
+              Επιλέχθηκε: <span className="font-bold text-emerald-400">
                 {leftSideTeam === "home" ? (homeTeamName || "Home") : (awayTeamName || "Away")}
               </span> στο αριστερό μέρος (επιτίθεται από y=0 προς y=100)
             </p>
-            <p className="text-[9px] text-white/50">
-              Δεξιά: <span className="text-white/70">
+            <p className="text-[9px] text-white/60">
+              Δεξιά: <span className="text-white/80 font-medium">
                 {leftSideTeam === "home" ? (awayTeamName || "Away") : (homeTeamName || "Home")}
               </span>
             </p>
@@ -824,18 +875,59 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
       <button
         type="submit"
         disabled={uploading || analyzing || leftSideTeam === null}
-        className="h-8 w-full rounded-md bg-emerald-500 text-[11px] font-semibold text-[#0b1220] shadow-sm transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+        className="h-11 w-full rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-[12px] font-bold text-white shadow-lg shadow-emerald-500/30 transition-all hover:from-emerald-400 hover:to-teal-400 hover:shadow-xl hover:shadow-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:from-emerald-500 disabled:hover:to-teal-500 flex items-center justify-center gap-2"
       >
-        {analyzing ? t("analyzingVideo") : uploading ? t("uploading") : leftSideTeam === null ? (t("pleaseSelectTeamSide") || "Επιλέξτε πλευρά ομάδας") : t("uploadAndAnalyze")}
+        {analyzing ? (
+          <>
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+            {t("analyzingVideo")}
+          </>
+        ) : uploading ? (
+          <>
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+            {t("uploading")}
+          </>
+        ) : leftSideTeam === null ? (
+          <>
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            {t("pleaseSelectTeamSide") || "Επιλέξτε πλευρά ομάδας"}
+          </>
+        ) : (
+          <>
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            {t("uploadAndAnalyze")}
+          </>
+        )}
       </button>
 
-      <div className="rounded-lg border border-[#1a1f2e] bg-[#0b1220] p-2 text-[10px] text-white/70">
-        <p className="font-medium text-white mb-1">{t("howItWorks")}</p>
-        <ul className="space-y-0.5 list-disc list-inside">
-          <li>{t("howItWorks1")}</li>
-          <li>{t("howItWorks2")}</li>
-          <li>{t("howItWorks3")}</li>
-          <li>{t("howItWorks4")}</li>
+      <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 text-[10px] text-white/70">
+        <p className="font-semibold text-white mb-2.5 flex items-center gap-2">
+          <svg className="h-4 w-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {t("howItWorks")}
+        </p>
+        <ul className="space-y-1.5 list-none">
+          <li className="flex items-start gap-2">
+            <span className="text-emerald-400 mt-0.5">•</span>
+            <span>{t("howItWorks1")}</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-emerald-400 mt-0.5">•</span>
+            <span>{t("howItWorks2")}</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-emerald-400 mt-0.5">•</span>
+            <span>{t("howItWorks3")}</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-emerald-400 mt-0.5">•</span>
+            <span>{t("howItWorks4")}</span>
+          </li>
         </ul>
       </div>
     </form>

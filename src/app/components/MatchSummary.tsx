@@ -5,7 +5,6 @@ import { MatchTimeline } from "./MatchTimeline";
 import dynamic from "next/dynamic";
 
 const XGTimelineChart = dynamic(() => import("./XGTimelineChart").then(m => ({ default: m.XGTimelineChart })), { ssr: false });
-const ShotMapChart = dynamic(() => import("./ShotMapChart").then(m => ({ default: m.ShotMapChart })), { ssr: false });
 const PossessionChart = dynamic(() => import("./PossessionChart").then(m => ({ default: m.PossessionChart })), { ssr: false });
 const KPICards = dynamic(() => import("./KPICards").then(m => ({ default: m.KPICards })), { ssr: false });
 
@@ -44,7 +43,6 @@ interface MatchSummaryProps {
     highRegains?: { home: number; away: number };
   } | null;
   xgTimelineData: Array<{ minute: number; home: number; away: number }>;
-  shotMapData: Array<{ x: number; y: number; team: string; goal: boolean; xg: number }>;
   homeTeamName: string;
   awayTeamName: string;
 }
@@ -54,7 +52,6 @@ export function MatchSummary({
   events,
   analytics,
   xgTimelineData,
-  shotMapData,
   homeTeamName,
   awayTeamName,
 }: MatchSummaryProps) {
@@ -258,35 +255,6 @@ export function MatchSummary({
         )}
       </div>
 
-      {/* Shot Map */}
-      {shotMapData.length > 0 && (
-        <div className="group relative overflow-hidden rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-6 shadow-2xl transition-all hover:border-slate-700/50 hover:shadow-xl">
-          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-          <div className="relative">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500/20 to-blue-600/10 border border-blue-500/30">
-                <svg className="h-5 w-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-white">Χάρτης Σουτ</h3>
-                <p className="text-[10px] text-white/60">Τοποθεσία και ποιότητα των σουτ στον αγώνα</p>
-              </div>
-            </div>
-            <div className="h-96">
-              <React.Suspense fallback={<div className="h-full animate-pulse bg-slate-900/50 rounded-lg" />}>
-                <ShotMapChart
-                  shots={shotMapData}
-                  homeTeamName={homeTeamName}
-                  awayTeamName={awayTeamName}
-                />
-              </React.Suspense>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Match Timeline */}
       {events.length > 0 && (

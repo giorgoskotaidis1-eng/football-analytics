@@ -14,7 +14,7 @@ import dynamic from "next/dynamic";
 const Heatmap = dynamic(() => import("@/app/components/Heatmap").then(m => ({ default: m.Heatmap })), { ssr: false });
 const LineupEditor = dynamic(() => import("@/app/components/LineupEditor").then(m => ({ default: m.LineupEditor })), { ssr: false });
 const XGTimelineChart = dynamic(() => import("@/app/components/XGTimelineChart").then(m => ({ default: m.XGTimelineChart })), { ssr: false });
-const ShotMapChart = dynamic(() => import("@/app/components/ShotMapChart").then(m => ({ default: m.ShotMapChart })), { ssr: false });
+const ShotAnalytics = dynamic(() => import("@/app/components/analytics/ShotAnalytics").then(m => ({ default: m.ShotAnalytics })), { ssr: false });
 const PossessionChart = dynamic(() => import("@/app/components/PossessionChart").then(m => ({ default: m.PossessionChart })), { ssr: false });
 const NetworkAnalysis = dynamic(() => import("@/app/components/NetworkAnalysis").then(m => ({ default: m.NetworkAnalysis })), { ssr: false });
 const SenseMatrix = dynamic(() => import("@/app/components/SenseMatrix").then(m => ({ default: m.SenseMatrix })), { ssr: false });
@@ -38,7 +38,8 @@ type TabKey =
   | "activity"
   | "vector"
   | "spotlight"
-  | "dynamics";
+  | "dynamics"
+  | "shot-analytics";
 
 type Match = {
   id: number;
@@ -84,7 +85,7 @@ export default function MatchDetailPage() {
     if (typeof window === "undefined") return "summary";
     try {
       const stored = localStorage.getItem(`match_${id}_activeTab`);
-      if (stored && ["summary", "lineup", "leaderboards", "network", "matrix", "distribution", "activity", "vector", "spotlight", "dynamics"].includes(stored)) {
+      if (stored && ["summary", "lineup", "leaderboards", "network", "matrix", "distribution", "activity", "vector", "spotlight", "dynamics", "shot-analytics"].includes(stored)) {
         return stored as TabKey;
       }
     } catch (e) {
@@ -333,59 +334,68 @@ export default function MatchDetailPage() {
       });
   }, [events]);
 
-  const shotMapData = useMemo(() => {
+  // Shot Analytics data transformation
+  const shotAnalyticsData = useMemo(() => {
     return events
-      .filter((e) => {
-        // Filter shots with valid coords (not null, not NaN, in 0-100 range)
-        if (!e || e.type !== "shot") return false;
-        const x = Number(e.x);
-        const y = Number(e.y);
-        return (
-          e.x !== null &&
-          e.y !== null &&
-          !isNaN(x) &&
-          !isNaN(y) &&
-          x >= 0 &&
-          x <= 100 &&
-          y >= 0 &&
-          y <= 100
-        );
-      })
+      .filter((e) => e && e.type === "shot")
       .map((shot) => {
         const x = Number(shot.x);
         const y = Number(shot.y);
         
-        // Normalize outcome: goal, saved, blocked, off_target
-        let outcome: "goal" | "saved" | "blocked" | "off_target" = "off_target";
+        // Parse outcome from metadata
+        let outcome: "OnGoal" | "Wide" | "Blocked" | "Goal" | undefined = undefined;
+        let goal = false;
         
         try {
           const metadata = shot.metadata ? JSON.parse(shot.metadata) : {};
           if (metadata && typeof metadata === "object") {
             const metaOutcome = String(metadata.outcome || "").toLowerCase();
-            if (metaOutcome === "goal") outcome = "goal";
-            else if (metaOutcome === "saved") outcome = "saved";
-            else if (metaOutcome === "blocked") outcome = "blocked";
-            else outcome = "off_target";
+            if (metaOutcome === "goal") {
+              outcome = "Goal";
+              goal = true;
+            } else if (metaOutcome === "saved" || metaOutcome === "ongoal") {
+              outcome = "OnGoal";
+            } else if (metaOutcome === "blocked") {
+              outcome = "Blocked";
+            } else if (metaOutcome === "off_target" || metaOutcome === "wide") {
+              outcome = "Wide";
+            }
           }
         } catch {
           // Invalid JSON, use default
         }
 
+        // Determine team ID
+        const teamId = shot.team === "home" 
+          ? String(match?.homeTeamId || "")
+          : String(match?.awayTeamId || "");
+
+        // Extract shot type from metadata if available
+        let shotType: string | undefined = undefined;
+        try {
+          const metadata = shot.metadata ? JSON.parse(shot.metadata) : {};
+          if (metadata && typeof metadata === "object" && metadata.shotType) {
+            shotType = String(metadata.shotType);
+          }
+        } catch {
+          // Invalid JSON, ignore
+        }
+
         return {
-          x: Math.max(0, Math.min(100, x)),
-          y: Math.max(0, Math.min(100, y)),
-          xg: shot.xg !== null && !isNaN(Number(shot.xg)) ? Number(shot.xg) : 0,
+          playerId: String(shot.player?.id || shot.id || ""),
+          playerName: shot.player?.name || "Unknown",
+          teamId,
+          timeSec: (shot.minute || 0) * 60,
+          x: Math.max(0, Math.min(1, x / 100)), // Convert 0-100 to 0-1
+          y: Math.max(0, Math.min(1, y / 100)),
+          goal,
+          xg: shot.xg !== null && !isNaN(Number(shot.xg)) ? Number(shot.xg) : undefined,
+          shotType,
           outcome,
-          team: shot.team as "home" | "away",
-          playerName: shot.player?.name || undefined,
-          minute: shot.minute !== null && !isNaN(Number(shot.minute)) ? Number(shot.minute) : undefined,
         };
       })
-      .filter((shot) => {
-        // Additional validation: ensure team is valid
-        return shot.team === "home" || shot.team === "away";
-      });
-  }, [events]);
+      .filter((s) => s.x >= 0 && s.x <= 1 && s.y >= 0 && s.y <= 1);
+  }, [events, match?.homeTeamId, match?.awayTeamId]);
 
   // Conditional returns must come after all hooks
   if (loading) {
@@ -615,6 +625,7 @@ export default function MatchDetailPage() {
               { key: "vector" as TabKey, label: "Vector Field" },
               { key: "spotlight" as TabKey, label: "Spotlight" },
               { key: "dynamics" as TabKey, label: "Match Dynamics" },
+              { key: "shot-analytics" as TabKey, label: "Shot Analytics" },
             ].map((tab) => (
               <button
                 key={tab.key}
@@ -678,445 +689,13 @@ export default function MatchDetailPage() {
                   events={events}
                   analytics={analytics}
                   xgTimelineData={xgTimelineData}
-                  shotMapData={shotMapData}
                   homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
                   awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
                 />
               </Suspense>
-            </>
-          )}
 
-          {/* OLD SUMMARY - REMOVED - Keeping for reference
-          {activeTab === "summary" && (
-            <>
-              <section className="grid gap-4 md:gap-6 md:grid-cols-3">
-                <div className="space-y-4 rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 md:col-span-2">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-white/70">Match statistics</p>
-                    <div className="flex gap-2">
-                      {match && (
-                        <>
-                          <VideoUpload
-                            matchId={match.id}
-                            homeTeamId={match.homeTeamId}
-                            awayTeamId={match.awayTeamId}
-                            homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
-                            awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
-                            onAnalysisComplete={() => {
-                              // Refresh everything after video analysis
-                              fetch(`/api/matches/${match.id}/events`)
-                                .then((r) => r.json())
-                                .then((d) => {
-                                  if (d.ok && d.events) setEvents(d.events);
-                                });
-                              fetchAnalytics();
-                            }}
-                          />
-                          <MatchEventForm
-                            matchId={match.id}
-                            homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
-                            awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
-                            players={players}
-                            onEventAdded={() => {
-                              // Refresh events and analytics
-                              fetch(`/api/matches/${match.id}/events`)
-                                .then((r) => r.json())
-                                .then((d) => {
-                                  if (d.ok && d.events) setEvents(d.events);
-                                });
-                              fetchAnalytics();
-                            }}
-                          />
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {events.length > 0 && (
-                    <div className="rounded-lg border border-[#1a1f2e] bg-[#0b1220] p-2 text-[10px] text-white/70">
-                      <p>
-                        <span className="font-medium text-white">{events.length}</span> events recorded
-                        {analytics && analytics.events && (
-                          <>
-                            {" • "}
-                            <span className="font-medium text-white">{analytics.events.byType.shots}</span> shots
-                            {" • "}
-                            <span className="font-medium text-white">{analytics.events.byType.passes}</span> passes
-                            {" • "}
-                            <span className="font-medium text-white">{analytics.events.byType.touches}</span> touches
-                          </>
-                        )}
-                      </p>
-                    </div>
-                  )}
-                  
-                  {events.length === 0 && (
-                    <div className="space-y-2 text-[11px] text-white/80">
-                      <p className="text-[10px] text-slate-500">
-                        Δεν έχουν καταγραφεί events ακόμα. Κάντε κλικ στο "Προσθήκη Event" για να ξεκινήσετε την καταγραφή σουτ, πασών και αγγιγμάτων. Τα στατιστικά θα υπολογιστούν αυτόματα από τα events σας.
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="mt-4 space-y-2">
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Συνολική σύνοψη</p>
-                    {[
-                      // Use analytics data if available, otherwise fall back to match data
-                      ...(analytics?.xg
-                        ? [{ label: "xG", home: Math.round((analytics.xg.home || 0) * 10), away: Math.round((analytics.xg.away || 0) * 10) }]
-                        : match.xgHome !== null && match.xgAway !== null && !isNaN(Number(match.xgHome)) && !isNaN(Number(match.xgAway))
-                        ? [{ label: "xG", home: Math.round((Number(match.xgHome) || 0) * 10), away: Math.round((Number(match.xgAway) || 0) * 10) }]
-                        : []),
-                      ...(analytics?.shots
-                        ? [{ label: "Συνολικά σουτ", home: Number(analytics.shots.home?.total) || 0, away: Number(analytics.shots.away?.total) || 0 }]
-                        : match.shotsHome !== null && match.shotsAway !== null && !isNaN(Number(match.shotsHome)) && !isNaN(Number(match.shotsAway))
-                        ? [{ label: "Συνολικά σουτ", home: Number(match.shotsHome) || 0, away: Number(match.shotsAway) || 0 }]
-                        : []),
-                      ...(analytics?.possession
-                        ? [{ label: "Κατοχή", home: Math.round((analytics.possession.home || 0) * 10), away: Math.round((analytics.possession.away || 0) * 10) }]
-                        : []),
-                    ].map((row) => {
-                      const home = Number(row.home) || 0;
-                      const away = Number(row.away) || 0;
-                      const total = home + away || 1;
-                      const homePct = Math.round((home / total) * 100);
-                      const awayPct = 100 - homePct;
-                      return (
-                        <div key={row.label} className="space-y-1 text-[10px] text-slate-400">
-                          <div className="flex items-center justify-between">
-                            <span>{row.label}</span>
-                            <span>
-                              {homePct}% vs {awayPct}%
-                            </span>
-                          </div>
-                          <div className="flex h-2 overflow-hidden rounded-full bg-slate-900">
-                            <div
-                              className="h-full bg-emerald-500"
-                              style={{ width: `${homePct}%` }}
-                            />
-                            <div
-                              className="h-full bg-sky-500"
-                              style={{ width: `${awayPct}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Match Timeline - Veo Style */}
-                  {events.length > 0 && (
-                    <div className="mt-6">
-                      <MatchTimeline
-                        events={events}
-                        matchDuration={90}
-                        onEventClick={(event) => {
-                          toast.success(`${event.type} at ${event.minute}'`, {
-                            duration: 2000,
-                          });
-                        }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Charts Section */}
-                  <div className="mt-6 space-y-4">
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Οπτικοποιήσεις</p>
-                    
-                    {/* xG Timeline Chart */}
-                    <div className="rounded-lg border border-slate-800 bg-slate-950 p-4" style={{ minWidth: 200, minHeight: 200 }}>
-                      <p className="mb-3 text-[11px] font-medium text-slate-200">Χρονοδιάγραμμα xG</p>
-                      <Suspense fallback={<div className="h-64 animate-pulse bg-slate-900 rounded" style={{ minWidth: 200, minHeight: 200 }} />}>
-                        <div style={{ width: "100%", height: "100%", minWidth: 200, minHeight: 200 }}>
-                          <XGTimelineChart
-                            data={xgTimelineData}
-                            homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
-                            awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
-                          />
-                        </div>
-                      </Suspense>
-                    </div>
-
-                    {/* Possession Chart */}
-                    {analytics?.possession && (
-                      <div className="rounded-lg border border-slate-800 bg-slate-950 p-4" style={{ minWidth: 200, minHeight: 200 }}>
-                        <p className="mb-3 text-[11px] font-medium text-slate-200">Κατοχή</p>
-                        <Suspense fallback={<div className="h-48 animate-pulse bg-slate-900 rounded" style={{ minWidth: 200, minHeight: 200 }} />}>
-                          <div style={{ width: "100%", height: "100%", minWidth: 200, minHeight: 200 }}>
-                            <PossessionChart
-                              home={analytics.possession.home}
-                              away={analytics.possession.away}
-                              homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
-                              awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
-                            />
-                          </div>
-                        </Suspense>
-                      </div>
-                    )}
-
-                    {/* Shot Map Chart */}
-                    {shotMapData.length > 0 ? (
-                      <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg" style={{ minWidth: 200, minHeight: 200 }}>
-                        <p className="mb-3 text-[11px] font-medium text-white">Shot Map</p>
-                        <Suspense fallback={<div className="h-64 animate-pulse bg-[#1a1f2e] rounded-xl" style={{ minWidth: 200, minHeight: 200 }} />}>
-                          <div style={{ width: "100%", height: "100%", minWidth: 200, minHeight: 200 }}>
-                            <ShotMapChart
-                              shots={shotMapData}
-                              homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
-                              awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
-                            />
-                          </div>
-                        </Suspense>
-                      </div>
-                    ) : (
-                      <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg" style={{ minWidth: 200, minHeight: 200 }}>
-                        <p className="mb-3 text-[11px] font-medium text-white">Shot Map</p>
-                        <div className="h-64 flex items-center justify-center text-white/50 text-sm" style={{ minWidth: 200, minHeight: 200 }}>
-                          Δεν έχουν καταγραφεί σουτ
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4 text-xs">
-                    {analytics?.shots ? (
-                      <>
-                        <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                          <p className="text-[10px] text-white/70 mb-2">Συνολικά σουτ</p>
-                          <p className="text-xl font-semibold text-white">
-                            {Number(analytics.shots.home?.total) || 0}
-                            <span className="text-[11px] text-white/50 ml-1"> vs </span>
-                            {Number(analytics.shots.away?.total) || 0}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                          <p className="text-[10px] text-white/70 mb-2">Σουτ στο τέρμα</p>
-                          <p className="text-xl font-semibold text-white">
-                            {Number(analytics.shots.home?.onTarget) || 0}
-                            <span className="text-[11px] text-white/50 ml-1"> vs </span>
-                            {Number(analytics.shots.away?.onTarget) || 0}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                          <p className="text-[10px] text-white/70 mb-2">Γκολ</p>
-                          <p className="text-xl font-semibold text-emerald-400">
-                            {Number(analytics.shots.home?.goals) || 0}
-                            <span className="text-[11px] text-white/50 ml-1"> vs </span>
-                            {Number(analytics.shots.away?.goals) || 0}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                          <p className="text-[10px] text-white/70 mb-2">Ποσοστό μετατροπής</p>
-                          <p className="text-xl font-semibold text-white">
-                            {Number(analytics.shots.home?.conversionRate) || 0}%
-                            <span className="text-[11px] text-white/50 ml-1"> vs </span>
-                            {Number(analytics.shots.away?.conversionRate) || 0}%
-                          </p>
-                        </div>
-                      </>
-                    ) : match.shotsHome !== null && match.shotsAway !== null && !isNaN(Number(match.shotsHome)) && !isNaN(Number(match.shotsAway)) ? (
-                      <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                        <p className="text-[10px] text-white/70 mb-2">Συνολικά σουτ</p>
-                        <p className="text-xl font-semibold text-white">
-                          {Number(match.shotsHome) || 0}
-                          <span className="text-[11px] text-white/50 ml-1"> vs </span>
-                          {Number(match.shotsAway) || 0}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                        <p className="text-[10px] text-white/70 mb-2">Συνολικά σουτ</p>
-                        <p className="text-xl font-semibold text-white/50">
-                          Χωρίς δεδομένα <span className="text-[11px] text-white/50 ml-1"> vs </span> Χωρίς δεδομένα
-                        </p>
-                      </div>
-                    )}
-                    {analytics?.possession ? (
-                      <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                        <p className="text-[10px] text-white/70 mb-2">Κατοχή</p>
-                        <p className="text-xl font-semibold text-white">
-                          {Number(analytics.possession.home) || 0}%
-                          <span className="text-[11px] text-white/50 ml-1"> vs </span>
-                          {Number(analytics.possession.away) || 0}%
-                        </p>
-                      </div>
-                    ) : null}
-                    {analytics?.passAccuracy ? (
-                      <>
-                        <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                          <p className="text-[10px] text-white/70 mb-2">Ακρίβεια πασών</p>
-                          <p className="text-xl font-semibold text-white">
-                            {Number(analytics.passAccuracy.home) || 0}%
-                            <span className="text-[11px] text-white/50 ml-1"> vs </span>
-                            {Number(analytics.passAccuracy.away) || 0}%
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                          <p className="text-[10px] text-white/70 mb-2">Προοδευτικές πάσες</p>
-                          <p className="text-xl font-semibold text-white">
-                            {Number(analytics.progressivePasses?.home) || 0}
-                            <span className="text-[11px] text-white/50 ml-1"> vs </span>
-                            {Number(analytics.progressivePasses?.away) || 0}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg">
-                          <p className="text-[10px] text-white/70 mb-2">Αναμενόμενες ασίστ (xA)</p>
-                          <p className="text-xl font-semibold text-emerald-400">
-                            {analytics.xa?.home && !isNaN(Number(analytics.xa.home)) ? Number(analytics.xa.home).toFixed(2) : "0.00"}
-                            <span className="text-[11px] text-white/50 ml-1"> vs </span>
-                            {analytics.xa?.away && !isNaN(Number(analytics.xa.away)) ? Number(analytics.xa.away).toFixed(2) : "0.00"}
-                          </p>
-                        </div>
-                      </>
-                    ) : null}
-                    {analytics?.ppda && analytics.ppda.home !== undefined && analytics.ppda.away !== undefined && !isNaN(Number(analytics.ppda.home)) && !isNaN(Number(analytics.ppda.away)) && (
-                      <div className="rounded-lg border border-slate-800 bg-slate-950 p-3">
-                        <p className="text-[10px] text-slate-400">PPDA (Ένταση πίεσης)</p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          Χαμηλότερο = πιο επιθετικό
-                        </p>
-                        <p className="mt-1 text-xl font-semibold text-slate-50">
-                          {Number(analytics.ppda.home).toFixed(1)}
-                          <span className="text-[11px] text-slate-500"> vs </span>
-                          {Number(analytics.ppda.away).toFixed(1)}
-                        </p>
-                      </div>
-                    )}
-                    {analytics?.highRegains && analytics.highRegains.home !== undefined && analytics.highRegains.away !== undefined && (
-                      <div className="rounded-lg border border-slate-800 bg-slate-950 p-3">
-                        <p className="text-[10px] text-slate-400">Υψηλές ανάκτησεις (0-40μ)</p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          Ανάκτηση μπάλας στο μισό του αντιπάλου
-                        </p>
-                        <p className="mt-1 text-xl font-semibold text-emerald-400">
-                          {Number(analytics.highRegains.home) || 0}
-                          <span className="text-[11px] text-slate-500"> vs </span>
-                          {Number(analytics.highRegains.away) || 0}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Heatmaps */}
-                  {analytics?.heatmaps && (
-                    <div className="mt-4 space-y-4">
-                      <p className="text-[11px] font-medium uppercase tracking-wide text-white/70">Χάρτες θερμότητας</p>
-                      <div className="grid gap-4 md:gap-6 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <p className="text-[10px] font-medium text-white/80 mb-1 relative" style={{ marginTop: '8px' }}>{getTeamName(match.homeTeam, match.homeTeamName)}</p>
-                          <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg" style={{ minHeight: '320px' }}>
-                            <Suspense fallback={<div className="h-[280px] animate-pulse bg-[#1a1f2e] rounded-xl" />}>
-                              {analytics.heatmaps?.home ? (
-                                <Heatmap 
-                                  data={analytics.heatmaps.home} 
-                                  width={400} 
-                                  height={280} 
-                                  team="home" 
-                                  teamName={getTeamName(match.homeTeam, match.homeTeamName)}
-                                />
-                              ) : (
-                                <div className="h-[280px] flex items-center justify-center text-white/50 text-sm">
-                                  Χωρίς δεδομένα χάρτη θερμότητας
-                                </div>
-                              )}
-                            </Suspense>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <p className="text-[10px] font-medium text-white/80 mb-1 relative" style={{ marginTop: '8px' }}>{getTeamName(match.awayTeam, match.awayTeamName)}</p>
-                          <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg" style={{ minHeight: '320px' }}>
-                            <Suspense fallback={<div className="h-[280px] animate-pulse bg-[#1a1f2e] rounded-xl" />}>
-                              {analytics.heatmaps?.away ? (
-                                <Heatmap 
-                                  data={analytics.heatmaps.away} 
-                                  width={400} 
-                                  height={280} 
-                                  team="away" 
-                                  teamName={getTeamName(match.awayTeam, match.awayTeamName)}
-                                />
-                              ) : (
-                                <div className="h-[280px] flex items-center justify-center text-white/50 text-sm">
-                                  Χωρίς δεδομένα χάρτη θερμότητας
-                                </div>
-                              )}
-                            </Suspense>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Shot Maps */}
-                  {analytics?.shotMaps && (
-                    <div className="mt-4 space-y-4">
-                      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Χάρτες σουτ</p>
-                      <div className="grid gap-4 md:gap-6 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <p className="text-[10px] font-medium text-white/80 mb-1 relative" style={{ marginTop: '8px' }}>
-                            {getTeamName(match.homeTeam, match.homeTeamName)} - {analytics.shots?.home?.total ?? 0} σουτ
-                          </p>
-                          <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg" style={{ minHeight: '320px' }}>
-                            {analytics.shotMaps?.home ? (
-                              <Heatmap 
-                                data={analytics.shotMaps.home} 
-                                width={400} 
-                                height={280} 
-                                team="home" 
-                                teamName={getTeamName(match.homeTeam, match.homeTeamName)}
-                              />
-                            ) : (
-                              <div className="h-[280px] flex items-center justify-center text-white/50 text-sm">
-                                Δεν υπάρχουν δεδομένα χάρτη σουτ
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <p className="text-[10px] font-medium text-white/80 mb-1 relative" style={{ marginTop: '8px' }}>
-                            {getTeamName(match.awayTeam, match.awayTeamName)} - {analytics.shots?.away?.total ?? 0} σουτ
-                          </p>
-                          <div className="rounded-xl border border-[#1a1f2e] bg-[#0b1220] p-4 shadow-lg" style={{ minHeight: '320px' }}>
-                            {analytics.shotMaps?.away ? (
-                              <Heatmap 
-                                data={analytics.shotMaps.away} 
-                                width={400} 
-                                height={280} 
-                                team="away" 
-                                teamName={getTeamName(match.awayTeam, match.awayTeamName)}
-                              />
-                            ) : (
-                              <div className="h-[280px] flex items-center justify-center text-white/50 text-sm">
-                                Δεν υπάρχουν δεδομένα χάρτη σουτ
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mt-4 space-y-2 rounded-lg border border-slate-800 bg-slate-950 p-3 text-[11px] text-slate-300">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-medium text-slate-200">Αλλαγές</p>
-                    </div>
-                    <p className="text-[10px] text-slate-500">
-                      Τα δεδομένα αλλαγών θα είναι διαθέσιμα όταν προστεθούν οι ενδεκάδες.
-                    </p>
-                  </div>
-                </div>
-
-                <Suspense fallback={<div className="h-64 animate-pulse rounded-xl bg-slate-900" />}>
-                  <AnalysisNotes
-                    events={events.map(e => ({ ...e, playerId: e.player?.id || null }))}
-                    players={players}
-                    analytics={analytics}
-                    homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
-                    awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
-                  />
-                </Suspense>
-              </section>
-
-              <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-950 p-4 text-[11px] text-slate-300">
+              {/* Comments Section */}
+              <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-950 p-4 text-[11px] text-slate-300 mt-6">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium">Σχόλια προπονητικού επιτελείου</p>
@@ -1417,6 +996,20 @@ export default function MatchDetailPage() {
             </section>
           )}
 
+          {activeTab === "shot-analytics" && (
+            <section className="space-y-4 rounded-xl border border-slate-800 bg-slate-950 p-4 text-[11px] text-slate-300">
+              <Suspense fallback={<div className="h-96 animate-pulse bg-slate-900 rounded" />}>
+                <ShotAnalytics
+                  shots={shotAnalyticsData}
+                  homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
+                  awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
+                  homeTeamId={String(match.homeTeamId || "")}
+                  awayTeamId={String(match.awayTeamId || "")}
+                />
+              </Suspense>
+            </section>
+          )}
+
           {activeTab === "spotlight" && (
             <section className="space-y-4 rounded-xl border border-slate-800 bg-slate-950 p-4 text-[11px] text-slate-300">
               <div className="flex items-center justify-between">
@@ -1435,7 +1028,7 @@ export default function MatchDetailPage() {
               </div>
               <Suspense fallback={<div className="h-96 animate-pulse bg-slate-900 rounded" />}>
                 <Spotlight 
-                  events={events.map(e => ({ ...e, playerId: e.player?.id || null }))} 
+                  events={events as any} 
                   matchId={match.id}
                   videoUrl={match.videoPath ? (() => {
                     // Handle different path formats

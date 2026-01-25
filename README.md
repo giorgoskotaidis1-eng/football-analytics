@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ⚽ Football Analytics App
 
-## Getting Started
+Professional football analytics platform with AI-powered video analysis, player statistics, match insights, and team management.
 
-First, run the development server:
+## 🚀 Quick Start
+
+### Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) to see the app.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Setup Environment
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run setup-env
+# or on Mac
+npm run setup-env-mac
+```
 
-## Learn More
+## 📦 Features
 
-To learn more about Next.js, take a look at the following resources:
+- **AI Video Analysis** - Automatic event detection from match videos
+- **Player Statistics** - Auto-calculated stats from match events
+- **Admin Panel** - Complete team and player management
+- **Player Dashboard** - Individual player profiles with highlights and heatmaps
+- **Match Analysis** - Detailed match insights and analytics
+- **Real-time Updates** - Live statistics and event tracking
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 🔗 Links
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **GitHub Repository:** https://github.com/giorgoskotaidis1-eng/football-analytics
+- **Deployment Guide:** See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)
 
-## Deploy on Vercel
+## 🚀 Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The easiest way to deploy is using [Vercel](https://vercel.com):
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Push your code to GitHub
+2. Import project in Vercel
+3. Add environment variables (see [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md))
+4. Deploy!
+
+For detailed deployment instructions, see [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md).
+
+## 📚 Documentation
+
+- [Deployment Guide](./DEPLOYMENT_GUIDE.md) - How to deploy to Vercel
+- [Mac Setup](./MAC_QUICK_START.md) - Setup instructions for Mac
+- [Email Setup](./EMAIL_SETUP.md) - Email configuration
+
+## 🛠️ Tech Stack
+
+- **Framework:** Next.js 16
+- **Database:** Prisma + SQLite (dev) / PostgreSQL (production)
+- **Styling:** Tailwind CSS
+- **Authentication:** JWT
+- **Video Processing:** FFmpeg
+- **AI/ML:** Custom YOLO models for event detection
+
+## 📝 License
+
+Private project - All rights reserved

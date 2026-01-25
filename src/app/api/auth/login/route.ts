@@ -25,33 +25,101 @@ export async function POST(request: Request) {
 
     const { email, password, rememberMe } = body;
 
+    // Try to find user first
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
-      return NextResponse.json({ ok: false, message: "Invalid email or password" }, { status: 401 });
+    let isPlayer = false;
+    let player = null;
+
+    // Check if it's a valid user login
+    const isValidUser = user && user.passwordHash && verifyPassword(password, user.passwordHash);
+
+    // If not a valid user, try to find as player
+    if (!isValidUser) {
+      // Try to find player by email (using findFirst since email might not be unique in schema yet)
+      player = await prisma.player.findFirst({ 
+        where: { email: email },
+        include: {
+          team: {
+            select: { id: true, name: true },
+          },
+        },
+      });
+
+      if (player && player.passwordHash && verifyPassword(password, player.passwordHash)) {
+        isPlayer = true;
+      } else {
+        return NextResponse.json({ ok: false, message: "Invalid email or password" }, { status: 401 });
+      }
     }
 
     // Set expiration: 30 days if rememberMe, otherwise 1 day
     const expirationDays = rememberMe ? 30 : 1;
 
-    const session = await createSession({
-      userId: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-    }, expirationDays);
+    let session;
+    let responseData;
+
+    if (isPlayer && player) {
+      // Player login - log the login event using raw SQL (workaround until Prisma client regenerates)
+      const loginTimestamp = new Date();
+      try {
+        await prisma.$executeRawUnsafe(
+          `UPDATE Player SET lastLoginAt = ?, isOnline = 1 WHERE id = ?`,
+          loginTimestamp.toISOString(),
+          player.id
+        );
+      } catch (error) {
+        console.error("[login] Failed to update player login status:", error);
+        // Continue with login even if tracking fails
+      }
+
+      // Login is already logged in the database update above
+      // No need for separate API call since we're already in the same process
+
+      session = await createSession({
+        userId: player.id,
+        email: player.email || "",
+        name: player.name,
+        role: "Player",
+      }, expirationDays);
+
+      responseData = {
+        ok: true,
+        user: {
+          id: player.id,
+          email: player.email,
+          name: player.name,
+          role: "Player",
+          position: player.position,
+          team: player.team,
+        },
+        message: "Login successful",
+      };
+    } else if (user) {
+      // Regular user login
+      session = await createSession({
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      }, expirationDays);
+
+      responseData = {
+        ok: true,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role ?? "Head analyst",
+        },
+        message: "Login successful",
+      };
+    } else {
+      return NextResponse.json({ ok: false, message: "Invalid email or password" }, { status: 401 });
+    }
 
     const maxAge = 60 * 60 * 24 * expirationDays; // days in seconds
     
-    const response = NextResponse.json({
-      ok: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role ?? "Head analyst",
-      },
-      message: "Login successful",
-    });
+    const response = NextResponse.json(responseData);
 
     // Set cookie in response headers
     response.cookies.set("session", session, {

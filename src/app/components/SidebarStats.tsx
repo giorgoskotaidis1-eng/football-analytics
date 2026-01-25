@@ -83,7 +83,7 @@ export function SidebarStats() {
   }, [pathname, fetchStats]);
 
   return (
-    <div className="grid grid-cols-3 gap-3 pt-4 border-t border-slate-800/50">
+    <div className="grid grid-cols-3 gap-3 pt-4">
       <div className="text-center">
         <p className="text-2xl font-bold bg-gradient-to-br from-white to-white/70 bg-clip-text text-transparent">{stats.teams}</p>
         <p className="text-[10px] text-slate-400 mt-1 font-medium uppercase tracking-wider">{t("teams")}</p>

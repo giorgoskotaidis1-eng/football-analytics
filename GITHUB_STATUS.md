@@ -89,3 +89,6 @@ npm run dev
 
 **Everything is ready for Mac setup!** 🚀
 
+
+
+

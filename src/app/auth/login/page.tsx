@@ -36,7 +36,15 @@ export default function LoginPage() {
 
         let data;
         try {
-          data = (await res.json()) as { ok?: boolean; message?: string; user?: unknown };
+          data = (await res.json()) as { 
+            ok?: boolean; 
+            message?: string; 
+            user?: { 
+              id: number; 
+              role?: string | null;
+              email?: string;
+            } 
+          };
         } catch (parseError) {
           console.error("[login] Failed to parse response:", parseError);
           setError("Server error. Please try again.");
@@ -50,19 +58,29 @@ export default function LoginPage() {
 
         setMessage("Login successful – welcome back!");
 
-        // Fire-and-forget mock welcome email
-        try {
-          await fetch("/api/notifications/welcome", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email }),
-          });
-        } catch {
-          // ignore email errors in mock environment
+        // Fire-and-forget mock welcome email (only for regular users)
+        if (data.user?.role !== "Player") {
+          try {
+            await fetch("/api/notifications/welcome", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email }),
+            });
+          } catch {
+            // ignore email errors in mock environment
+          }
         }
 
-        // Redirect to home and force full page reload to update UI
-        window.location.href = "/";
+        // Redirect based on user role
+        if (data.user?.role === "Player" && data.user?.id) {
+          // Redirect to player dashboard
+          setTimeout(() => {
+            window.location.href = `/players/${data.user.id}/dashboard`;
+          }, 500);
+        } else {
+          // Redirect to home for regular users
+          window.location.href = "/";
+        }
       } catch (error) {
         console.error("[login] Network error:", error);
         setError(`Network error: ${error instanceof Error ? error.message : "Please try again."}`);

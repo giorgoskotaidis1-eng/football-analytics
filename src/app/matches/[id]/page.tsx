@@ -381,18 +381,28 @@ export default function MatchDetailPage() {
           // Invalid JSON, ignore
         }
 
-        return {
-          playerId: String(shot.player?.id || shot.id || ""),
-          playerName: shot.player?.name || "Unknown",
-          teamId,
-          timeSec: (shot.minute || 0) * 60,
-          x: Math.max(0, Math.min(1, x / 100)), // Convert 0-100 to 0-1
-          y: Math.max(0, Math.min(1, y / 100)),
-          goal,
-          xg: shot.xg !== null && !isNaN(Number(shot.xg)) ? Number(shot.xg) : undefined,
-          shotType,
-          outcome,
-        };
+                        // Get player name - if no player assigned, try to show tracking info
+                        let playerName = "Unknown";
+                        if (shot.player?.name) {
+                          playerName = shot.player.name;
+                        } else if (shot.playerId) {
+                          // If we have a playerId but no player relation, it might be a tracking ID
+                          // Try to get player from database
+                          playerName = `Player #${shot.playerId}`;
+                        }
+
+                        return {
+                          playerId: String(shot.player?.id || shot.playerId || shot.id || ""),
+                          playerName,
+                          teamId,
+                          timeSec: (shot.minute || 0) * 60,
+                          x: Math.max(0, Math.min(1, x / 100)), // Convert 0-100 to 0-1
+                          y: Math.max(0, Math.min(1, y / 100)),
+                          goal,
+                          xg: shot.xg !== null && !isNaN(Number(shot.xg)) ? Number(shot.xg) : undefined,
+                          shotType,
+                          outcome,
+                        };
       })
       .filter((s) => s.x >= 0 && s.x <= 1 && s.y >= 0 && s.y <= 1);
   }, [events, match?.homeTeamId, match?.awayTeamId]);

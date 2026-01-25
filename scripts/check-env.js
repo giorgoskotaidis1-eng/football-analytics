@@ -36,3 +36,6 @@ console.log('');
 console.log('If you still get errors, make sure the path is correct:');
 console.log('DATABASE_URL should point to: file:./prisma/dev.db');
 
+
+
+

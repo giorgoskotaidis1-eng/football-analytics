@@ -63,6 +63,14 @@ model Player {
   foot      String?  // "Right", "Left", "Both"
   number    Int?     // Jersey number
 
+  // Authentication for player dashboard
+  email     String?  @unique
+  passwordHash String?
+  
+  // Login tracking
+  lastLoginAt DateTime?
+  isOnline    Boolean  @default(false)
+
   // Simple season metrics (per 90 or totals)
   goals                    Int?    @default(0)
   assists                  Int?    @default(0)

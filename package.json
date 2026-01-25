@@ -15,7 +15,9 @@
     "full-setup": "node scripts/full-setup.js",
     "fix-password": "node scripts/fix-user-password.js",
     "migrate": "prisma migrate dev",
-    "create-user": "node scripts/create-default-user.js"
+    "create-user": "node scripts/create-default-user.js",
+    "create-test-player": "node scripts/create-test-player.js",
+    "add-player-login-tracking": "node scripts/add-player-login-tracking.js"
   },
   "dependencies": {
     "@ffprobe-installer/ffprobe": "^2.1.2",

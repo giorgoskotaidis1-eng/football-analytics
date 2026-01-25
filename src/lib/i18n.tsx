@@ -573,7 +573,11 @@ const translations: Record<Language, Record<string, string>> = {
     noTeamsFound: "No teams found",
     never: "Never",
     online: "Online",
-    offline: "Offline"
+    offline: "Offline",
+    recalculateStats: "Recalculate Stats",
+    recalculating: "Recalculating...",
+    statsRecalculated: "Statistics recalculated successfully",
+    statsRecalculationFailed: "Failed to recalculate statistics"
   },
   gr: {
     // Navigation
@@ -1107,7 +1111,11 @@ const translations: Record<Language, Record<string, string>> = {
     noTeamsFound: "Δεν βρέθηκαν ομάδες",
     never: "Ποτέ",
     online: "Συνδεδεμένος",
-    offline: "Αποσυνδεδεμένος"
+    offline: "Αποσυνδεδεμένος",
+    recalculateStats: "Αναυπολογισμός Στατιστικών",
+    recalculating: "Αναυπολογισμός...",
+    statsRecalculated: "Τα στατιστικά αναυπολογίστηκαν επιτυχώς",
+    statsRecalculationFailed: "Αποτυχία αναυπολογισμού στατιστικών"
   },
 };
 

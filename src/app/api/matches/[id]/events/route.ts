@@ -161,6 +161,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // Invalidate analytics cache when new event is added
   invalidateAnalyticsCache(matchId);
 
+  // Auto-update player stats if event has a player
+  if (event.playerId) {
+    try {
+      const { updatePlayerStatsFromEvents } = await import("@/lib/player-stats-calculator");
+      await updatePlayerStatsFromEvents(event.playerId);
+    } catch (error) {
+      console.error("[events] Failed to update player stats:", error);
+      // Don't fail the request if stats update fails
+    }
+  }
+
   return NextResponse.json({ ok: true, event }, { status: 201 });
 }
 

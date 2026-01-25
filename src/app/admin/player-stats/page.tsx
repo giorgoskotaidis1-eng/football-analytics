@@ -36,6 +36,7 @@ export default function PlayerStatsAdminPage() {
   const [uploading, setUploading] = useState(false);
   const [highlightPlayer, setHighlightPlayer] = useState<Player | null>(null);
   const [showHighlightModal, setShowHighlightModal] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
   const [accountPlayer, setAccountPlayer] = useState<Player | null>(null);
   const [showAccountModal, setShowAccountModal] = useState(false);
 
@@ -202,6 +203,36 @@ export default function PlayerStatsAdminPage() {
 
         {/* CSV Actions */}
         <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              if (recalculating) return;
+              try {
+                setRecalculating(true);
+                const res = await fetch("/api/admin/recalculate-player-stats", {
+                  method: "POST",
+                });
+                const data = await res.json();
+                if (data.ok) {
+                  alert(t("statsRecalculated") + ` (${data.successful || data.message})`);
+                  fetchPlayers(); // Refresh player list
+                } else {
+                  alert(t("statsRecalculationFailed") + ": " + (data.message || "Unknown error"));
+                }
+              } catch (error) {
+                console.error("[Recalculate] Error:", error);
+                alert(t("statsRecalculationFailed"));
+              } finally {
+                setRecalculating(false);
+              }
+            }}
+            disabled={recalculating}
+            className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 px-4 py-2.5 text-sm font-semibold text-emerald-200 cursor-pointer transition-all hover:from-emerald-500/30 hover:to-teal-500/30 hover:border-emerald-500/50 hover:shadow-lg hover:shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {recalculating ? t("recalculating") : t("recalculateStats")}
+          </button>
           <button
             onClick={() => {
               // Create CSV template

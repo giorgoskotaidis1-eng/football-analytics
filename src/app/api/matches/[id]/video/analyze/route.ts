@@ -607,6 +607,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       },
     });
 
+    // Auto-update player stats for all players with events in this match
+    const uniquePlayerIds = new Set(
+      createdEvents
+        .map((e) => e.playerId)
+        .filter((id): id is number => id !== null && id !== undefined)
+    );
+    
+    if (uniquePlayerIds.size > 0) {
+      console.log(`[video-analyze] Updating stats for ${uniquePlayerIds.size} players...`);
+      const { updatePlayerStatsFromEvents } = await import("@/lib/player-stats-calculator");
+      await Promise.allSettled(
+        Array.from(uniquePlayerIds).map((playerId) =>
+          updatePlayerStatsFromEvents(playerId).catch((err) => {
+            console.error(`[video-analyze] Failed to update stats for player ${playerId}:`, err);
+          })
+        )
+      );
+      console.log(`[video-analyze] Player stats updated successfully.`);
+    }
+
     return NextResponse.json({
       ok: true,
       analysis: {

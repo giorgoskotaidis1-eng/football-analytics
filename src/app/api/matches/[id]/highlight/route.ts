@@ -60,6 +60,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const homeTeamName = getTeamName(match.homeTeam, (match as any).homeTeamName);
     const awayTeamName = getTeamName(match.awayTeam, (match as any).awayTeamName);
 
+    // Helper to read the "outcome" stored inside the event metadata JSON string.
+    const getOutcome = (e: { metadata: string | null }): string | undefined => {
+      if (!e.metadata) return undefined;
+      try {
+        const parsed = JSON.parse(e.metadata) as { outcome?: string };
+        return parsed?.outcome;
+      } catch {
+        return undefined;
+      }
+    };
+
     // Analyze events to find highlight moments
     const highlights: Array<{
       minute: number;
@@ -72,7 +83,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // Find goals
     const goals = match.events.filter(
-      (e) => e.type === "shot" && e.outcome === "goal"
+      (e) => e.type === "shot" && getOutcome(e) === "goal"
     );
     goals.forEach((goal) => {
       highlights.push({
@@ -87,7 +98,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // Find high xG shots (missed opportunities)
     const highXGShots = match.events.filter(
-      (e) => e.type === "shot" && e.xg && e.xg > 0.3 && e.outcome !== "goal"
+      (e) => e.type === "shot" && e.xg && e.xg > 0.3 && getOutcome(e) !== "goal"
     );
     highXGShots.forEach((shot) => {
       highlights.push({
@@ -102,7 +113,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // Find key passes/assists
     const keyPasses = match.events.filter(
-      (e) => e.type === "pass" && e.outcome === "successful"
+      (e) => e.type === "pass" && getOutcome(e) === "successful"
     );
     // Group passes by minute and find assists (pass before goal)
     goals.forEach((goal) => {

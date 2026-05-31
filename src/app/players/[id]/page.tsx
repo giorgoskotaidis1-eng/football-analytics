@@ -9,6 +9,7 @@ type Player = {
   name: string;
   position: string;
   age: number | null;
+  number: number | null;
   club: string | null;
   nationality: string | null;
   foot: string | null;

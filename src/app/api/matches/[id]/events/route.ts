@@ -224,10 +224,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   invalidateAnalyticsCache(matchId);
 
   // Auto-update player stats if event has a player
-  if (event.playerId) {
+  const eventPlayerId = event.player?.id;
+  if (eventPlayerId) {
     try {
       const { updatePlayerStatsFromEvents } = await import("@/lib/player-stats-calculator");
-      await updatePlayerStatsFromEvents(event.playerId);
+      await updatePlayerStatsFromEvents(eventPlayerId);
     } catch (error) {
       console.error("[events] Failed to update player stats:", error);
       // Don't fail the request if stats update fails

@@ -56,8 +56,9 @@ export function PlayerRadarChart({ players, mode = "all" }: PlayerRadarChartProp
   };
   const selectedAxes = axesByMode[mode];
 
-  // Prepare data for radar chart
-  const radarData: PlayerRadarData[] = selectedAxes.map((axis) => ({
+  // Prepare data for radar chart. Each row is one axis with a column per player
+  // (e.g. { name: "Shooting", player0: 1.2, player1: 0.8 }).
+  const radarData: Array<Record<string, number | string>> = selectedAxes.map((axis) => ({
     name: axis.label,
     ...players.reduce((acc, player, idx) => {
       acc[`player${idx}`] = player.radarMetrics[axis.key];

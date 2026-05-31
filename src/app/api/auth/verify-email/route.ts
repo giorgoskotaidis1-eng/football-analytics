@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   }
 
   await prisma.user.update({
-    where: { email: record.email },
+    where: { id: record.userId },
     data: { emailVerified: true },
   });
 

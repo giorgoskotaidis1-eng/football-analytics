@@ -11,6 +11,10 @@ export default function PlayerLoginPage() {
     router.replace("/auth/login");
   }, [router]);
 
-  return null;
+  return (
+    <div className="mx-auto max-w-md p-6 text-center text-[11px] text-slate-400">
+      Redirecting to sign in…
+    </div>
+  );
 }
 

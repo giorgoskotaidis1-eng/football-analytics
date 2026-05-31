@@ -228,13 +228,14 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        console.error(`[ai/analyze-video] Python analysis failed: ${runResult.error}`);
+        const failureError = "error" in runResult ? runResult.error : "Unknown error";
+        console.error(`[ai/analyze-video] Python analysis failed: ${failureError}`);
         resolve(
           NextResponse.json(
             {
               ok: false,
               message: "Video analysis failed",
-              error: runResult.error || "Unknown error",
+              error: failureError || "Unknown error",
             },
             { status: 500 }
           )

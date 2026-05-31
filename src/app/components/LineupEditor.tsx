@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import type { JSX } from "react";
 import toast from "react-hot-toast";
 
 interface Player {

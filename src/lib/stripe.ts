@@ -80,6 +80,22 @@ export function getPlan(plan: string | null | undefined): PlanDefinition | null 
   return PLAN_DEFINITIONS[plan] ?? null;
 }
 
+/**
+ * Returns true when the development-only mock checkout may be used for a plan.
+ *
+ * Mock checkout is permitted only outside production AND only when real Stripe
+ * billing is not configured for the plan (missing secret key or price ID).
+ * When Stripe is fully configured, the real Checkout flow must be used instead.
+ */
+export function isDevMockCheckoutAllowed(plan: string): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  const definition = getPlan(plan);
+  if (!definition || !definition.isPaid || !definition.stripePriceEnv) return false;
+  const hasSecret = Boolean(process.env.STRIPE_SECRET_KEY);
+  const hasPrice = Boolean(process.env[definition.stripePriceEnv]);
+  return !(hasSecret && hasPrice);
+}
+
 export function getStripePriceIdForPlan(plan: string): string {
   const definition = getPlan(plan);
   if (!definition) {
@@ -139,9 +155,12 @@ export function assertStripeSubscriptionId(id: string): void {
   }
 }
 
-function customerMetadataMatchesUser(customer: Stripe.Customer, userId: number): boolean {
+function customerMetadataMatchesUser(
+  customer: Stripe.Customer | Stripe.DeletedCustomer,
+  userId: number
+): boolean {
   if ("deleted" in customer && customer.deleted) return false;
-  const meta = customer.metadata?.appUserId;
+  const meta = "metadata" in customer ? customer.metadata?.appUserId : undefined;
   return meta === String(userId);
 }
 

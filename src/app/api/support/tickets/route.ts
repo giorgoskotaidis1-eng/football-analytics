@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as unknown;
   const parsed = ticketSchema.safeParse(body);
   if (!parsed.success) {
-    const message = parsed.error.errors[0]?.message || "Invalid ticket payload";
+    const message = parsed.error.issues[0]?.message || "Invalid ticket payload";
     return NextResponse.json({ ok: false, message }, { status: 400 });
   }
 

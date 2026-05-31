@@ -177,6 +177,16 @@ const sampleEvents = [
   { minute: 78, type: "goal", team: "home", player: "Γιάννης Παπαδόπουλος", xG: 0.85 },
 ];
 
+const sampleXgTimeline = (() => {
+  let home = 0;
+  let away = 0;
+  return sampleEvents.map((e) => {
+    if (e.team === "home") home += e.xG;
+    else away += e.xG;
+    return { minute: e.minute, home: Number(home.toFixed(2)), away: Number(away.toFixed(2)) };
+  });
+})();
+
 type DemoSection = "overview" | "players" | "match" | "analytics" | "comparison";
 
 export default function DemoPage() {
@@ -404,7 +414,7 @@ export default function DemoPage() {
                 <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
                   <h3 className="text-sm font-semibold text-white mb-3">xG Timeline</h3>
                   <div className="h-64">
-                    <XGTimelineChart events={sampleEvents} />
+                    <XGTimelineChart data={sampleXgTimeline} homeTeamName={sampleMatch.homeTeam.name} awayTeamName={sampleMatch.awayTeam.name} />
                   </div>
                 </div>
               </div>

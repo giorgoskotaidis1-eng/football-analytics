@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { format } from "date-fns";
@@ -90,7 +90,7 @@ function getTeamName(team: { name: string } | null, teamName: string | null | un
   return "Unknown";
 }
 
-export default function TeamComparePage() {
+function TeamComparePageContent() {
   const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1229,3 +1229,10 @@ export default function TeamComparePage() {
   );
 }
 
+export default function TeamComparePage() {
+  return (
+    <Suspense fallback={null}>
+      <TeamComparePageContent />
+    </Suspense>
+  );
+}

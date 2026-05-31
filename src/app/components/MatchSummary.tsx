@@ -25,9 +25,13 @@ interface MatchSummaryProps {
   events: Array<{
     id: number;
     type: string;
-    minute: number | null;
-    player?: { name: string } | null;
     team: string;
+    minute: number | null;
+    x: number | null;
+    y: number | null;
+    xg: number | null;
+    player: { id: number; name: string } | null;
+    metadata: string | null;
   }>;
   analytics: {
     xg?: { home: number; away: number };

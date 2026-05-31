@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { PlayerRadarChart } from "@/app/components/PlayerRadarChart";
@@ -52,7 +52,7 @@ type PlayerStats = {
   };
 };
 
-export default function PlayerComparePage() {
+function PlayerComparePageContent() {
   const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -881,3 +881,10 @@ export default function PlayerComparePage() {
   );
 }
 
+export default function PlayerComparePage() {
+  return (
+    <Suspense fallback={null}>
+      <PlayerComparePageContent />
+    </Suspense>
+  );
+}

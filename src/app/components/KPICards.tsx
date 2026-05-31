@@ -7,8 +7,8 @@ import { useTranslation } from "@/lib/i18n";
 interface KPICardsProps {
   analytics: {
     shots?: {
-      home: { total: number; onTarget: number; goals: number; conversionRate: number };
-      away: { total: number; onTarget: number; goals: number; conversionRate: number };
+      home: { total: number; onTarget: number; goals: number; conversionRate?: number };
+      away: { total: number; onTarget: number; goals: number; conversionRate?: number };
     };
     possession?: { home: number; away: number };
     passAccuracy?: { home: number; away: number };

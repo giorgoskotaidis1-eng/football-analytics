@@ -166,6 +166,9 @@ export function PlayerComparison({ matchId, players, events, analytics }: Player
 
       const fullMetrics: PlayerMetrics = {
         ...metrics,
+        playerId: metrics.playerId ?? 0,
+        playerName: metrics.playerName ?? "Unknown",
+        position: metrics.position ?? "Unknown",
         minutesPlayed: minutes,
         xg: metrics.xg || 0,
         xa: metrics.xa || 0,

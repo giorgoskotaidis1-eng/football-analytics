@@ -198,7 +198,9 @@ export function PlayersAnalysis({
         clearances: 0,
         blocks: 0,
         fouls: 0,
-        teamSide: derivedTeamFromRoster === "home" || derivedTeamFromRoster === "away" ? derivedTeamFromRoster : "unknown",
+        teamSide: (derivedTeamFromRoster === "home" || derivedTeamFromRoster === "away" ? derivedTeamFromRoster : "unknown") as "home" | "away" | "unknown",
+        totalActions: 0,
+        sampleQuality: "low" as "low" | "normal",
         moments: {
           goals: [],
           shots: [],

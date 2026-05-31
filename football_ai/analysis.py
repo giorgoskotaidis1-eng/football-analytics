@@ -36,6 +36,20 @@ except (ImportError, SyntaxError) as e:
     BallTracker = None
 from ultralytics import YOLO
 
+def _to_json_safe(value):
+    """Recursively convert numpy/scalar types to JSON-safe Python primitives."""
+    if isinstance(value, dict):
+        return {str(k): _to_json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [_to_json_safe(v) for v in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    return value
+
 
 class FootballVideoAnalyzer:
     """Analyzes football videos using YOLOv8 for object detection"""
@@ -175,9 +189,9 @@ class FootballVideoAnalyzer:
                     cls_id = int(box.cls[0])
                     conf = float(box.conf[0])
                     
-                    # Only detect players and ball with confidence threshold
-                    # Higher threshold for ball (smaller object, harder to detect)
-                    min_confidence = 0.3 if cls_id == self.player_class_id else 0.5
+                    # Confidence thresholds tuned for match footage:
+                    # ball is tiny in many broadcasts, so keep a lower threshold.
+                    min_confidence = 0.25 if cls_id == self.player_class_id else 0.20
                     
                     if (cls_id == self.player_class_id or cls_id == self.ball_class_id) and conf >= min_confidence:
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
@@ -288,6 +302,7 @@ class FootballVideoAnalyzer:
             "events": all_events,
             "tracking_enabled": advanced_detector is not None,
         }
+        result = _to_json_safe(result)
         
         if output_format == "json":
             return json.dumps(result, indent=2)
@@ -319,7 +334,9 @@ class FootballVideoAnalyzer:
         # Fallback to basic detection
         events = []
         prev_ball_pos = None
-        ball_velocity_threshold = 5.0
+        ball_velocity_threshold = 3.5
+        last_touch_frame = -999
+        touch_cooldown_frames = max(1, int(fps * 0.8))
         
         for i, frame_data in enumerate(frames_data):
             ball_detections = [d for d in frame_data["detections"] if d["class"] == "ball"]
@@ -328,13 +345,49 @@ class FootballVideoAnalyzer:
             if ball_detections:
                 ball = ball_detections[0]
                 ball_pos = ball["position"]
+
+                # Touch: when the ball is close to any player (with cooldown to avoid spam).
+                closest_player = None
+                closest_dist = None
+                for player in player_detections:
+                    px, py = player["position"]["x"], player["position"]["y"]
+                    dist = float(np.sqrt((ball_pos["x"] - px) ** 2 + (ball_pos["y"] - py) ** 2))
+                    if closest_dist is None or dist < closest_dist:
+                        closest_dist = dist
+                        closest_player = player
+
+                if (
+                    closest_player is not None
+                    and closest_dist is not None
+                    and closest_dist < 8.0
+                    and (frame_data["frame"] - last_touch_frame) >= touch_cooldown_frames
+                ):
+                    events.append({
+                        "type": "touch",
+                        "frame": frame_data["frame"],
+                        "timestamp": frame_data["timestamp"],
+                        "confidence": round(min(ball["confidence"], closest_player["confidence"]), 3),
+                        "position": ball_pos,
+                    })
+                    last_touch_frame = frame_data["frame"]
                 
                 if prev_ball_pos:
                     dx = ball_pos["x"] - prev_ball_pos["x"]
                     dy = ball_pos["y"] - prev_ball_pos["y"]
                     velocity = np.sqrt(dx**2 + dy**2)
-                    
-                    if velocity > ball_velocity_threshold and ball_pos["x"] > 66:
+
+                    # Pass: medium/high velocity in midfield zones.
+                    if velocity > 4.0 and 20 <= ball_pos["x"] <= 80:
+                        events.append({
+                            "type": "pass",
+                            "frame": frame_data["frame"],
+                            "timestamp": frame_data["timestamp"],
+                            "confidence": ball["confidence"],
+                            "position": ball_pos,
+                        })
+
+                    # Shot heuristic: very high velocity near either goal.
+                    if velocity > ball_velocity_threshold and (ball_pos["x"] > 82 or ball_pos["x"] < 18):
                         events.append({
                             "type": "shot",
                             "frame": frame_data["frame"],
@@ -371,274 +424,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-                "tackles": len(tackles),
-            },
-            "events": all_events,
-            "tracking_enabled": advanced_detector is not None,
-        }
-        
-        if output_format == "json":
-            return json.dumps(result, indent=2)
-        return result
-    
-    def detect_events(
-        self,
-        frames_data: List[Dict],
-        fps: float
-    ) -> List[Dict]:
-        """
-        Detect football events from frame-by-frame detections
-        Uses enhanced event detection for all statistics
-        
-        Args:
-            frames_data: List of frame detection data
-            fps: Frames per second
-        
-        Returns:
-            List of detected events with all types:
-            - shot, pass, touch, tackle, interception, recovery, corner, free_kick
-        """
-        # Use enhanced event detector if available
-        if EnhancedEventDetector:
-            detector = EnhancedEventDetector(fps=fps)
-            events = detector.detect_all_events(frames_data)
-            return events
-        
-        # Fallback to basic detection
-        events = []
-        prev_ball_pos = None
-        ball_velocity_threshold = 5.0
-        
-        for i, frame_data in enumerate(frames_data):
-            ball_detections = [d for d in frame_data["detections"] if d["class"] == "ball"]
-            player_detections = [d for d in frame_data["detections"] if d["class"] == "player"]
-            
-            if ball_detections:
-                ball = ball_detections[0]
-                ball_pos = ball["position"]
-                
-                if prev_ball_pos:
-                    dx = ball_pos["x"] - prev_ball_pos["x"]
-                    dy = ball_pos["y"] - prev_ball_pos["y"]
-                    velocity = np.sqrt(dx**2 + dy**2)
-                    
-                    if velocity > ball_velocity_threshold and ball_pos["x"] > 66:
-                        events.append({
-                            "type": "shot",
-                            "frame": frame_data["frame"],
-                            "timestamp": frame_data["timestamp"],
-                            "confidence": ball["confidence"],
-                            "position": ball_pos,
-                        })
-                
-                prev_ball_pos = ball_pos
-        
-        return events
-
-
-def main():
-    """CLI entry point for video analysis"""
-    if len(sys.argv) < 2:
-        print("Usage: python -m football_ai.analysis <video_path> [model_path]", file=sys.stderr)
-        sys.exit(1)
-    
-    video_path = sys.argv[1]
-    model_path = sys.argv[2] if len(sys.argv) > 2 else None
-    
-    try:
-        analyzer = FootballVideoAnalyzer(model_path=model_path)
-        result = analyzer.analyze_video(video_path, output_format="json")
-        print(result)
-    except Exception as e:
-        print(json.dumps({
-            "error": str(e),
-            "type": type(e).__name__
-        }), file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
-
-
-                "tackles": len(tackles),
-            },
-            "events": all_events,
-            "tracking_enabled": advanced_detector is not None,
-        }
-        
-        if output_format == "json":
-            return json.dumps(result, indent=2)
-        return result
-    
-    def detect_events(
-        self,
-        frames_data: List[Dict],
-        fps: float
-    ) -> List[Dict]:
-        """
-        Detect football events from frame-by-frame detections
-        Uses enhanced event detection for all statistics
-        
-        Args:
-            frames_data: List of frame detection data
-            fps: Frames per second
-        
-        Returns:
-            List of detected events with all types:
-            - shot, pass, touch, tackle, interception, recovery, corner, free_kick
-        """
-        # Use enhanced event detector if available
-        if EnhancedEventDetector:
-            detector = EnhancedEventDetector(fps=fps)
-            events = detector.detect_all_events(frames_data)
-            return events
-        
-        # Fallback to basic detection
-        events = []
-        prev_ball_pos = None
-        ball_velocity_threshold = 5.0
-        
-        for i, frame_data in enumerate(frames_data):
-            ball_detections = [d for d in frame_data["detections"] if d["class"] == "ball"]
-            player_detections = [d for d in frame_data["detections"] if d["class"] == "player"]
-            
-            if ball_detections:
-                ball = ball_detections[0]
-                ball_pos = ball["position"]
-                
-                if prev_ball_pos:
-                    dx = ball_pos["x"] - prev_ball_pos["x"]
-                    dy = ball_pos["y"] - prev_ball_pos["y"]
-                    velocity = np.sqrt(dx**2 + dy**2)
-                    
-                    if velocity > ball_velocity_threshold and ball_pos["x"] > 66:
-                        events.append({
-                            "type": "shot",
-                            "frame": frame_data["frame"],
-                            "timestamp": frame_data["timestamp"],
-                            "confidence": ball["confidence"],
-                            "position": ball_pos,
-                        })
-                
-                prev_ball_pos = ball_pos
-        
-        return events
-
-
-def main():
-    """CLI entry point for video analysis"""
-    if len(sys.argv) < 2:
-        print("Usage: python -m football_ai.analysis <video_path> [model_path]", file=sys.stderr)
-        sys.exit(1)
-    
-    video_path = sys.argv[1]
-    model_path = sys.argv[2] if len(sys.argv) > 2 else None
-    
-    try:
-        analyzer = FootballVideoAnalyzer(model_path=model_path)
-        result = analyzer.analyze_video(video_path, output_format="json")
-        print(result)
-    except Exception as e:
-        print(json.dumps({
-            "error": str(e),
-            "type": type(e).__name__
-        }), file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
-
-
-                "tackles": len(tackles),
-            },
-            "events": all_events,
-            "tracking_enabled": advanced_detector is not None,
-        }
-        
-        if output_format == "json":
-            return json.dumps(result, indent=2)
-        return result
-    
-    def detect_events(
-        self,
-        frames_data: List[Dict],
-        fps: float
-    ) -> List[Dict]:
-        """
-        Detect football events from frame-by-frame detections
-        Uses enhanced event detection for all statistics
-        
-        Args:
-            frames_data: List of frame detection data
-            fps: Frames per second
-        
-        Returns:
-            List of detected events with all types:
-            - shot, pass, touch, tackle, interception, recovery, corner, free_kick
-        """
-        # Use enhanced event detector if available
-        if EnhancedEventDetector:
-            detector = EnhancedEventDetector(fps=fps)
-            events = detector.detect_all_events(frames_data)
-            return events
-        
-        # Fallback to basic detection
-        events = []
-        prev_ball_pos = None
-        ball_velocity_threshold = 5.0
-        
-        for i, frame_data in enumerate(frames_data):
-            ball_detections = [d for d in frame_data["detections"] if d["class"] == "ball"]
-            player_detections = [d for d in frame_data["detections"] if d["class"] == "player"]
-            
-            if ball_detections:
-                ball = ball_detections[0]
-                ball_pos = ball["position"]
-                
-                if prev_ball_pos:
-                    dx = ball_pos["x"] - prev_ball_pos["x"]
-                    dy = ball_pos["y"] - prev_ball_pos["y"]
-                    velocity = np.sqrt(dx**2 + dy**2)
-                    
-                    if velocity > ball_velocity_threshold and ball_pos["x"] > 66:
-                        events.append({
-                            "type": "shot",
-                            "frame": frame_data["frame"],
-                            "timestamp": frame_data["timestamp"],
-                            "confidence": ball["confidence"],
-                            "position": ball_pos,
-                        })
-                
-                prev_ball_pos = ball_pos
-        
-        return events
-
-
-def main():
-    """CLI entry point for video analysis"""
-    if len(sys.argv) < 2:
-        print("Usage: python -m football_ai.analysis <video_path> [model_path]", file=sys.stderr)
-        sys.exit(1)
-    
-    video_path = sys.argv[1]
-    model_path = sys.argv[2] if len(sys.argv) > 2 else None
-    
-    try:
-        analyzer = FootballVideoAnalyzer(model_path=model_path)
-        result = analyzer.analyze_video(video_path, output_format="json")
-        print(result)
-    except Exception as e:
-        print(json.dumps({
-            "error": str(e),
-            "type": type(e).__name__
-        }), file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
-

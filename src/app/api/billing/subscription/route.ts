@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { getPlan } from "@/lib/stripe";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,6 @@ export async function GET(request: NextRequest) {
   const all = searchParams.get("all") === "true";
 
   if (all) {
-    // Get all subscriptions (admin view)
     const subscriptions = await prisma.subscription.findMany({
       include: {
         user: {
@@ -31,7 +31,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: true, subscriptions });
   }
 
-  // Get current user's subscription
   const subscription = await prisma.subscription.findFirst({
     where: {
       userId: user.id,
@@ -50,19 +49,25 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Get invoices (can be wired to payment provider later)
-  const invoices: any[] = [];
-
   return NextResponse.json({
     ok: true,
     plan: subscription.plan,
     status: subscription.status,
     renewsAt: subscription.currentPeriodEnd?.toISOString() || null,
+    provider: subscription.provider,
     subscriptions: [subscription],
-    invoices,
+    invoices: [],
   });
 }
 
+/**
+ * Subscription mutations:
+ *  - "subscribe" with the free plan creates an internal record (no payment).
+ *  - All other state changes (paid subscribe, cancel, reactivate) must go
+ *    through Stripe Checkout (POST /api/billing/checkout) or the Stripe
+ *    Billing Portal (POST /api/billing/portal). This guarantees the local
+ *    DB stays in sync with Stripe via the webhook.
+ */
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) {
@@ -71,62 +76,60 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => ({}));
   const action = body?.action as "cancel" | "reactivate" | "subscribe" | undefined;
-  const plan = body?.plan as string | undefined;
+  const planId = typeof body?.plan === "string" ? body.plan : undefined;
 
-  if (action === "subscribe" && plan) {
-    // Create or update subscription
+  if (action === "subscribe" && planId) {
+    const plan = getPlan(planId);
+    if (!plan) {
+      return NextResponse.json(
+        { ok: false, error: "INVALID_PLAN", message: `Unknown plan "${planId}".` },
+        { status: 400 }
+      );
+    }
+
+    if (plan.isPaid) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "USE_STRIPE_CHECKOUT",
+          message:
+            "Paid plans must be activated through the Stripe Checkout flow. Use POST /api/billing/checkout instead.",
+        },
+        { status: 400 }
+      );
+    }
+
     const currentPeriodEnd = new Date();
-    currentPeriodEnd.setMonth(currentPeriodEnd.getMonth() + 1); // 1 month from now
+    currentPeriodEnd.setFullYear(currentPeriodEnd.getFullYear() + 100);
 
-    // Cancel existing active subscriptions
     await prisma.subscription.updateMany({
-      where: {
-        userId: user.id,
-        status: "active",
-      },
-      data: {
-        status: "canceled",
-      },
+      where: { userId: user.id, status: "active" },
+      data: { status: "canceled" },
     });
 
-    // Create new subscription
     const subscription = await prisma.subscription.create({
       data: {
         userId: user.id,
-        plan: plan,
+        plan: plan.id,
         status: "active",
-        currentPeriodEnd: currentPeriodEnd,
-        provider: "internal", // For now, using internal payment processing
+        currentPeriodEnd,
+        provider: "internal",
       },
     });
 
     return NextResponse.json({ ok: true, subscription });
   }
 
-  if (action === "cancel") {
-    await prisma.subscription.updateMany({
-      where: {
-        userId: user.id,
-        status: "active",
+  if (action === "cancel" || action === "reactivate") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "USE_STRIPE_PORTAL",
+        message:
+          "Subscription changes must be made through the Stripe Billing Portal. Use POST /api/billing/portal to open it.",
       },
-      data: {
-        status: "canceled",
-      },
-    });
-    return NextResponse.json({ ok: true, message: "Subscription canceled" });
-  }
-
-  if (action === "reactivate") {
-    await prisma.subscription.updateMany({
-      where: {
-        userId: user.id,
-        status: "canceled",
-      },
-      data: {
-        status: "active",
-      },
-    });
-    return NextResponse.json({ ok: true, message: "Subscription reactivated" });
+      { status: 400 }
+    );
   }
 
   return NextResponse.json({ ok: false, error: "Invalid action" }, { status: 400 });

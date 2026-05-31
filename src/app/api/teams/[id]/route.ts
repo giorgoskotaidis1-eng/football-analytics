@@ -17,6 +17,22 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ ok: false, message: "Invalid team ID" }, { status: 400 });
   }
 
+  // Get user's team IDs to verify access
+  const userTeams = await prisma.userTeam.findMany({
+    where: { userId: user.id, status: "active" },
+    select: { teamId: true },
+  });
+  
+  const createdTeams = await prisma.team.findMany({
+    where: { createdById: user.id },
+    select: { id: true },
+  });
+  
+  const userTeamIds = [
+    ...userTeams.map((ut) => ut.teamId),
+    ...createdTeams.map((t) => t.id),
+  ];
+
   const team = await prisma.team.findUnique({
     where: { id: teamId },
     include: {
@@ -38,6 +54,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   if (!team) {
     return NextResponse.json({ ok: false, message: "Team not found" }, { status: 404 });
+  }
+
+  // Verify user has access to this team
+  if (!userTeamIds.includes(team.id)) {
+    return NextResponse.json({ ok: false, message: "You don't have access to this team" }, { status: 403 });
   }
 
   return NextResponse.json({ ok: true, team });

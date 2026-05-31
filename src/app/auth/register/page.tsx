@@ -9,9 +9,20 @@ export default function RegisterPage() {
   const [club, setClub] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState("Head Coach");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const roles = [
+    "Head Coach",
+    "Assistant Coach",
+    "Head Analyst",
+    "Analyst",
+    "Scout",
+    "Physio",
+    "Other",
+  ];
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -23,7 +34,7 @@ export default function RegisterPage() {
         const res = await fetch("/api/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, club, email, password }),
+          body: JSON.stringify({ name, club, email, password, role }),
         });
 
         const data = (await res.json()) as { ok?: boolean; message?: string };
@@ -64,14 +75,29 @@ export default function RegisterPage() {
           />
         </div>
         <div className="space-y-1.5">
+          <label className="text-[11px] font-medium text-slate-300">Role</label>
+          <select
+            className="h-8 w-full rounded-md border border-slate-800 bg-slate-900 px-2 text-[11px] text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/60"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+          >
+            {roles.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1.5">
           <label className="text-[11px] font-medium text-slate-300">Club / Team</label>
           <input
             type="text"
             className="h-8 w-full rounded-md border border-slate-800 bg-slate-900 px-2 text-[11px] text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/60"
-            placeholder="Your club name"
+            placeholder="Your club name (optional)"
             value={club}
             onChange={(e) => setClub(e.target.value)}
           />
+          <p className="text-[10px] text-slate-500">Leave empty if joining existing team</p>
         </div>
         <div className="space-y-1.5">
           <label className="text-[11px] font-medium text-slate-300">Email</label>

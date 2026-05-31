@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useRef, useEffect } from "react";
 
 type TeamId = string;
 type PlayerId = string;
@@ -56,6 +56,7 @@ interface PassNetworkProps {
     name: string;
     number?: number | null;
     position?: string;
+    teamId?: number | null;
   }>;
   homeTeamId: number | null;
   awayTeamId: number | null;
@@ -97,15 +98,63 @@ const DEFAULT_POSITIONS: Record<string, { x: number; y: number }> = {
 function getDefaultPosition(position?: string): { x: number; y: number } {
   if (!position) return { x: 0.5, y: 0.5 };
   const pos = position.toUpperCase();
+  // Common long-form labels
+  if (pos.includes("GOALKEEPER")) return DEFAULT_POSITIONS.GK;
+  if (pos.includes("DEFENDER") || pos.includes("CENTRE-BACK") || pos.includes("CENTER-BACK")) return DEFAULT_POSITIONS.CB;
+  if (pos.includes("MIDFIELDER") || pos.includes("MIDFIELD")) return DEFAULT_POSITIONS.CM;
+  if (pos.includes("FORWARD") || pos.includes("STRIKER") || pos.includes("ATTACKER")) return DEFAULT_POSITIONS.ST;
+  if (pos.includes("WINGER")) return pos.includes("RIGHT") ? DEFAULT_POSITIONS.RW : DEFAULT_POSITIONS.LW;
   for (const [key, value] of Object.entries(DEFAULT_POSITIONS)) {
     if (pos.includes(key)) return value;
   }
   return { x: 0.5, y: 0.5 };
 }
 
+function getPositionBucket(position?: string): string {
+  if (!position) return "CM";
+  const pos = position.toUpperCase();
+  if (pos.includes("GOALKEEPER") || pos.includes("GK")) return "GK";
+  if (
+    pos.includes("DEFENDER") ||
+    pos.includes("BACK") ||
+    pos.includes("CB") ||
+    pos.includes("LB") ||
+    pos.includes("RB")
+  ) {
+    return "CB";
+  }
+  if (
+    pos.includes("MIDFIELDER") ||
+    pos.includes("MIDFIELD") ||
+    pos.includes("CM") ||
+    pos.includes("DM") ||
+    pos.includes("AM")
+  ) {
+    return "CM";
+  }
+  if (
+    pos.includes("FORWARD") ||
+    pos.includes("STRIKER") ||
+    pos.includes("ATTACKER") ||
+    pos.includes("ST") ||
+    pos.includes("FW")
+  ) {
+    return "ST";
+  }
+  return "CM";
+}
+
+function getTacticalLane(position?: string): { bucket: "GK" | "DEF" | "MID" | "ATT"; laneX: number } {
+  const bucket = getPositionBucket(position);
+  if (bucket === "GK") return { bucket: "GK", laneX: 0.1 };
+  if (bucket === "CB") return { bucket: "DEF", laneX: 0.28 };
+  if (bucket === "ST") return { bucket: "ATT", laneX: 0.76 };
+  return { bucket: "MID", laneX: 0.52 };
+}
+
 function buildPassNetwork(
   events: PassNetworkProps["events"],
-  players: PassNetworkProps["players"],
+  teamPlayers: PassNetworkProps["players"],
   team: "home" | "away",
   filters: Filters
 ): PassNetwork {
@@ -146,6 +195,13 @@ function buildPassNetwork(
   const playerPassCounts = new Map<PlayerId, { sent: number; received: number }>();
   const playerPositions = new Map<PlayerId, { x: number; y: number; count: number }>();
 
+  const passRecords: Array<{
+    fromId: PlayerId;
+    toId: PlayerId | null;
+    toX: number | null;
+    toY: number | null;
+  }> = [];
+
   passes.forEach((pass) => {
     if (!pass.playerId) return;
 
@@ -153,16 +209,20 @@ function buildPassNetwork(
     
     // Get receiver from metadata
     let toId: PlayerId | null = null;
+    let toX: number | null = null;
+    let toY: number | null = null;
     if (pass.metadata) {
       try {
         const meta = JSON.parse(pass.metadata);
         toId = meta.toId?.toString() || meta.toPlayerId?.toString() || meta.receiverId?.toString() || null;
+        toX = meta.toX ?? meta.endX ?? null;
+        toY = meta.toY ?? meta.endY ?? null;
       } catch {
         // Invalid JSON
       }
     }
 
-    // Track position
+    // Track passer position
     if (pass.x !== null && pass.y !== null) {
       const x = pass.x / 100; // Normalize to 0-1
       const y = pass.y / 100;
@@ -174,14 +234,80 @@ function buildPassNetwork(
       });
     }
 
+    // Track receiver position from pass endpoint (helps avoid node stacking in center).
+    if (toId && toX !== null && toY !== null && !Number.isNaN(Number(toX)) && !Number.isNaN(Number(toY))) {
+      const rx = Number(toX) / 100;
+      const ry = Number(toY) / 100;
+      const pos = playerPositions.get(toId) || { x: 0, y: 0, count: 0 };
+      playerPositions.set(toId, {
+        x: pos.x + rx,
+        y: pos.y + ry,
+        count: pos.count + 1,
+      });
+    }
+
     // Track sent passes
     const stats = playerPassCounts.get(fromId) || { sent: 0, received: 0 };
     playerPassCounts.set(fromId, { ...stats, sent: stats.sent + 1 });
 
-    if (toId && toId !== fromId) {
-      const key = `${fromId}-${toId}`;
+    passRecords.push({
+      fromId,
+      toId,
+      toX: toX !== null && !Number.isNaN(Number(toX)) ? Number(toX) : null,
+      toY: toY !== null && !Number.isNaN(Number(toY)) ? Number(toY) : null,
+    });
+  });
+
+  // Normalize positions
+  const normalizedPositions = new Map<PlayerId, { x: number; y: number }>();
+  playerPositions.forEach((pos, playerId) => {
+    if (pos.count > 0) {
+      normalizedPositions.set(playerId, {
+        x: pos.x / pos.count,
+        y: pos.y / pos.count,
+      });
+    }
+  });
+
+  // Build fallback player position map from known/default positions for inference.
+  const playerFallbackPos = new Map<PlayerId, { x: number; y: number }>();
+  teamPlayers.forEach((p) => {
+    const pid = p.id.toString();
+    playerFallbackPos.set(pid, normalizedPositions.get(pid) || getDefaultPosition(p.position));
+  });
+
+  // Create edges in a second pass (after positions are available).
+  passRecords.forEach((record) => {
+    let toId = record.toId;
+
+    // Infer receiver when explicit receiver id is missing, using nearest player to pass end coordinates.
+    if (!toId && record.toX !== null && record.toY !== null) {
+      const tx = record.toX / 100;
+      const ty = record.toY / 100;
+      let bestId: string | null = null;
+      let bestDist = Infinity;
+
+      playerFallbackPos.forEach((pos, pid) => {
+        if (pid === record.fromId) return;
+        const dx = pos.x - tx;
+        const dy = pos.y - ty;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < bestDist) {
+          bestDist = d;
+          bestId = pid;
+        }
+      });
+
+      // threshold in normalized pitch units (~18% of pitch)
+      if (bestId && bestDist <= 0.18) {
+        toId = bestId;
+      }
+    }
+
+    if (toId && toId !== record.fromId) {
+      const key = `${record.fromId}-${toId}`;
       const edge = edgeMap.get(key) || {
-        from: fromId,
+        from: record.fromId,
         to: toId,
         count: 0,
         attempted: 0,
@@ -197,30 +323,37 @@ function buildPassNetwork(
     }
   });
 
-  // Normalize positions
-  const normalizedPositions = new Map<PlayerId, { x: number; y: number }>();
-  playerPositions.forEach((pos, playerId) => {
-    if (pos.count > 0) {
-      normalizedPositions.set(playerId, {
-        x: pos.x / pos.count,
-        y: pos.y / pos.count,
-      });
-    }
-  });
-
   // Build nodes
   const nodeMap = new Map<PlayerId, PlayerNode>();
   const allowedPlayerIds = filters.playerIds?.length
     ? new Set(filters.playerIds)
     : null;
+  const fallbackPositionUsage = new Map<string, number>();
 
-  players.forEach((p) => {
+  teamPlayers.forEach((p) => {
     if (allowedPlayerIds && !allowedPlayerIds.has(p.id.toString())) {
       return;
     }
 
     const playerId = p.id.toString();
-    const pos = normalizedPositions.get(playerId) || getDefaultPosition(p.position);
+    const learnedPos = normalizedPositions.get(playerId);
+    let pos = learnedPos || getDefaultPosition(p.position);
+
+    // If we don't have learned positions from events, spread players in the same role bucket
+    // so they don't overlap in a single point (common in showcase/demo data).
+    if (!learnedPos) {
+      const bucket = getPositionBucket(p.position);
+      const idx = fallbackPositionUsage.get(bucket) || 0;
+      fallbackPositionUsage.set(bucket, idx + 1);
+      if (idx > 0) {
+        const laneOffset = Math.min(0.24, idx * 0.06);
+        const sign = idx % 2 === 0 ? 1 : -1;
+        pos = {
+          x: Math.min(0.94, Math.max(0.06, pos.x)),
+          y: Math.min(0.94, Math.max(0.06, pos.y + sign * laneOffset)),
+        };
+      }
+    }
     
     nodeMap.set(playerId, {
       id: playerId,
@@ -290,24 +423,192 @@ function PassMap({ network, teamColor, selectedPlayerId, onPlayerSelect, width =
   const [hoveredEdge, setHoveredEdge] = useState<PassEdge | null>(null);
   const [hoveredNode, setHoveredNode] = useState<PlayerNode | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const tooltipRafRef = useRef<number | null>(null);
 
-  const maxCount = useMemo(() => Math.max(...network.edges.map((e) => e.count), 1), [network.edges]);
+  const visibleEdges = useMemo(() => {
+    const MAX_EDGES = 160;
+    let edges = network.edges;
+    if (selectedPlayerId) {
+      edges = edges.filter((e) => e.from === selectedPlayerId || e.to === selectedPlayerId);
+    }
+    if (edges.length <= MAX_EDGES) return edges;
+    return [...edges].sort((a, b) => b.count - a.count).slice(0, MAX_EDGES);
+  }, [network.edges, selectedPlayerId]);
+
+  const maxCount = useMemo(() => Math.max(...visibleEdges.map((e) => e.count), 1), [visibleEdges]);
   const maxDegree = useMemo(() => {
     const degrees = new Map<PlayerId, number>();
-    network.edges.forEach((e) => {
+    visibleEdges.forEach((e) => {
       degrees.set(e.from, (degrees.get(e.from) || 0) + e.count);
       degrees.set(e.to, (degrees.get(e.to) || 0) + e.count);
     });
     return Math.max(...Array.from(degrees.values()), 1);
-  }, [network.edges]);
+  }, [visibleEdges]);
+
+  const nodeById = useMemo(() => {
+    const map = new Map<PlayerId, PlayerNode>();
+    network.nodes.forEach((n) => map.set(n.id, n));
+    return map;
+  }, [network.nodes]);
+
+  const degreeByNode = useMemo(() => {
+    const degrees = new Map<PlayerId, number>();
+    visibleEdges.forEach((e) => {
+      degrees.set(e.from, (degrees.get(e.from) || 0) + e.count);
+      degrees.set(e.to, (degrees.get(e.to) || 0) + e.count);
+    });
+    return degrees;
+  }, [visibleEdges]);
+  const selectedNodeLockedCount = useMemo(() => {
+    if (!selectedPlayerId) return 0;
+    return network.nodes.filter((n) => n.id !== selectedPlayerId).length;
+  }, [network.nodes, selectedPlayerId]);
+
+  // Resolve node overlaps with a lightweight repulsion pass in screen-space.
+  const adjustedNodePos = useMemo(() => {
+    const laneGroups = new Map<"GK" | "DEF" | "MID" | "ATT", Array<{
+      id: string;
+      obsX: number;
+      obsY: number;
+      laneX: number;
+    }>>();
+    laneGroups.set("GK", []);
+    laneGroups.set("DEF", []);
+    laneGroups.set("MID", []);
+    laneGroups.set("ATT", []);
+
+    network.nodes.forEach((n) => {
+      const obsX = typeof n.x === "number" ? n.x : 0.5;
+      const obsY = typeof n.y === "number" ? n.y : 0.5;
+      const lane = getTacticalLane(n.position);
+      laneGroups.get(lane.bucket)!.push({
+        id: n.id,
+        obsX,
+        obsY,
+        laneX: lane.laneX,
+      });
+    });
+
+    const pts: Array<{ id: string; x: number; y: number }> = [];
+    const bucketOrder: Array<"GK" | "DEF" | "MID" | "ATT"> = ["GK", "DEF", "MID", "ATT"];
+    bucketOrder.forEach((bucket) => {
+      const group = laneGroups.get(bucket) || [];
+      if (group.length === 0) return;
+      const sorted = [...group].sort((a, b) => a.obsY - b.obsY);
+      const yMin = 0.16;
+      const yMax = 0.84;
+      sorted.forEach((p, idx) => {
+        const slotY =
+          sorted.length === 1
+            ? 0.5
+            : yMin + ((yMax - yMin) * idx) / (sorted.length - 1);
+        // Strongly anchor on tactical lanes while keeping some event influence.
+        const x = p.laneX * 0.8 + p.obsX * 0.2;
+        const y = slotY * 0.75 + p.obsY * 0.25;
+        pts.push({
+          id: p.id,
+          x: x * width,
+          y: y * height,
+        });
+      });
+    });
+
+    const minDist = 52; // pixels
+    const iterations = 30;
+
+    for (let k = 0; k < iterations; k++) {
+      for (let i = 0; i < pts.length; i++) {
+        for (let j = i + 1; j < pts.length; j++) {
+          const a = pts[i];
+          const b = pts[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+          if (dist >= minDist) continue;
+
+          const overlap = (minDist - dist) * 0.5;
+          const ux = dx / dist;
+          const uy = dy / dist;
+
+          a.x -= ux * overlap;
+          a.y -= uy * overlap;
+          b.x += ux * overlap;
+          b.y += uy * overlap;
+        }
+      }
+    }
+
+    // Hard-separate tiny clusters that remain almost stacked.
+    // This avoids the "same spot" look in showcase/demo datasets.
+    const nearThreshold = 44;
+    const clusterRadius = 32;
+    const visited = new Set<string>();
+    const clusters: Array<Array<{ id: string; x: number; y: number }>> = [];
+    for (let i = 0; i < pts.length; i++) {
+      const seed = pts[i];
+      if (visited.has(seed.id)) continue;
+      const cluster = [seed];
+      visited.add(seed.id);
+      for (let j = i + 1; j < pts.length; j++) {
+        const other = pts[j];
+        const dx = other.x - seed.x;
+        const dy = other.y - seed.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= nearThreshold) {
+          cluster.push(other);
+          visited.add(other.id);
+        }
+      }
+      clusters.push(cluster);
+    }
+
+    clusters.forEach((cluster) => {
+      if (cluster.length <= 1) return;
+      const cx = cluster.reduce((s, p) => s + p.x, 0) / cluster.length;
+      const cy = cluster.reduce((s, p) => s + p.y, 0) / cluster.length;
+      const sorted = [...cluster].sort((a, b) => a.id.localeCompare(b.id));
+      sorted.forEach((p, idx) => {
+        const angle = (Math.PI * 2 * idx) / sorted.length;
+        p.x = cx + Math.cos(angle) * clusterRadius;
+        p.y = cy + Math.sin(angle) * clusterRadius;
+      });
+    });
+
+    // Keep inside pitch padding
+    const pad = 24;
+    const map = new Map<PlayerId, { x: number; y: number }>();
+    pts.forEach((p) => {
+      map.set(p.id, {
+        x: Math.min(width - pad, Math.max(pad, p.x)),
+        y: Math.min(height - pad, Math.max(pad, p.y)),
+      });
+    });
+    return map;
+  }, [network.nodes, width, height]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (selectedPlayerId) return;
+    if (!hoveredEdge && !hoveredNode) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    setTooltipPos({
+    const next = {
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
+    };
+    if (tooltipRafRef.current !== null) {
+      cancelAnimationFrame(tooltipRafRef.current);
+    }
+    tooltipRafRef.current = requestAnimationFrame(() => {
+      setTooltipPos(next);
+      tooltipRafRef.current = null;
     });
-  }, []);
+  }, [hoveredEdge, hoveredNode, selectedPlayerId]);
+
+  // While a player is locked, disable hover/tooltip churn to prevent jitter.
+  useEffect(() => {
+    if (!selectedPlayerId) return;
+    setHoveredEdge(null);
+    setHoveredNode(null);
+    setTooltipPos(null);
+  }, [selectedPlayerId]);
 
   if (network.edges.length === 0) {
     return (
@@ -332,6 +633,10 @@ function PassMap({ network, teamColor, selectedPlayerId, onPlayerSelect, width =
           setHoveredEdge(null);
           setHoveredNode(null);
           setTooltipPos(null);
+          if (tooltipRafRef.current !== null) {
+            cancelAnimationFrame(tooltipRafRef.current);
+            tooltipRafRef.current = null;
+          }
         }}
       >
         <defs>
@@ -368,19 +673,21 @@ function PassMap({ network, teamColor, selectedPlayerId, onPlayerSelect, width =
         </g>
 
         {/* Edges with animations */}
-        {network.edges.map((edge, idx) => {
-          const fromNode = network.nodes.find((n) => n.id === edge.from);
-          const toNode = network.nodes.find((n) => n.id === edge.to);
+        {visibleEdges.map((edge, idx) => {
+          const fromNode = nodeById.get(edge.from);
+          const toNode = nodeById.get(edge.to);
           if (!fromNode || !toNode || !fromNode.x || !fromNode.y || !toNode.x || !toNode.y) return null;
 
-          const x1 = fromNode.x * width;
-          const y1 = fromNode.y * height;
-          const x2 = toNode.x * width;
-          const y2 = toNode.y * height;
+          const fromPos = adjustedNodePos.get(fromNode.id);
+          const toPos = adjustedNodePos.get(toNode.id);
+          const x1 = fromPos ? fromPos.x : fromNode.x * width;
+          const y1 = fromPos ? fromPos.y : fromNode.y * height;
+          const x2 = toPos ? toPos.x : toNode.x * width;
+          const y2 = toPos ? toPos.y : toNode.y * height;
 
           const strokeWidth = 1.5 + 4 * (edge.count / maxCount);
           const baseOpacity = 0.3 + 0.6 * (edge.accuracy || 1);
-          const isHovered = hoveredEdge === edge;
+          const isHovered = !selectedPlayerId && hoveredEdge === edge;
           const opacity = isHovered ? 1 : baseOpacity;
 
           return (
@@ -393,12 +700,17 @@ function PassMap({ network, teamColor, selectedPlayerId, onPlayerSelect, width =
               stroke={teamColor}
               strokeWidth={strokeWidth}
               opacity={opacity}
-              style={{ 
+              style={{
+                // Keep heavy blur only on hover to avoid constant GPU cost.
                 filter: isHovered ? "url(#glowStrong)" : "none",
                 transition: "opacity 0.2s ease, filter 0.2s ease",
               }}
-              onMouseEnter={() => setHoveredEdge(edge)}
-              onMouseLeave={() => setHoveredEdge(null)}
+              onMouseEnter={() => {
+                if (!selectedPlayerId) setHoveredEdge(edge);
+              }}
+              onMouseLeave={() => {
+                if (!selectedPlayerId) setHoveredEdge(null);
+              }}
               cursor="pointer"
             />
           );
@@ -408,16 +720,15 @@ function PassMap({ network, teamColor, selectedPlayerId, onPlayerSelect, width =
         {network.nodes.map((node) => {
           if (!node.x || !node.y) return null;
 
-          const degree = network.edges.reduce((sum, e) => {
-            if (e.from === node.id || e.to === node.id) return sum + e.count;
-            return sum;
-          }, 0);
+          const degree = degreeByNode.get(node.id) || 0;
 
           const radius = 14 + 4 * Math.sqrt(degree / maxDegree);
-          const x = node.x * width;
-          const y = node.y * height;
+          const hitRadius = radius + 10; // stable hover/click target to prevent edge jitter
+          const nodePos = adjustedNodePos.get(node.id);
+          const x = nodePos ? nodePos.x : node.x * width;
+          const y = nodePos ? nodePos.y : node.y * height;
           const isSelected = selectedPlayerId === node.id;
-          const isHovered = hoveredNode === node;
+          const isHovered = !selectedPlayerId && hoveredNode === node;
 
           return (
             <g key={node.id} style={{ transition: "transform 0.2s ease" }}>
@@ -445,11 +756,34 @@ function PassMap({ network, teamColor, selectedPlayerId, onPlayerSelect, width =
                 style={{ 
                   filter: isHovered || isSelected ? "url(#glowStrong)" : "url(#glow)",
                   transition: "all 0.2s ease",
-                  transform: isHovered ? "scale(1.1)" : "scale(1)",
+                  transform: "scale(1)",
+                  pointerEvents: "none",
                 }}
-                onMouseEnter={() => setHoveredNode(node)}
-                onMouseLeave={() => setHoveredNode(null)}
-                onClick={() => onPlayerSelect(isSelected ? null : node.id)}
+              />
+              {/* Stable interaction hit area */}
+              <circle
+                cx={x}
+                cy={y}
+                r={hitRadius}
+                fill="transparent"
+                style={{ pointerEvents: "all" }}
+                onMouseEnter={() => {
+                  if (!selectedPlayerId) {
+                    setHoveredNode(node);
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (!selectedPlayerId) {
+                    setHoveredNode(null);
+                  }
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const nextSelectedId = selectedPlayerId === node.id ? null : node.id;
+                  onPlayerSelect(nextSelectedId);
+                  setHoveredEdge(null);
+                  setHoveredNode(nextSelectedId ? node : null);
+                }}
                 cursor="pointer"
               />
               {/* Shirt number */}
@@ -498,7 +832,7 @@ function PassMap({ network, teamColor, selectedPlayerId, onPlayerSelect, width =
       </svg>
 
       {/* Enhanced Tooltip */}
-      {(hoveredEdge || hoveredNode) && tooltipPos && (
+      {(!selectedPlayerId && (hoveredEdge || hoveredNode)) && tooltipPos && (
         <div
           className="absolute pointer-events-none z-50 rounded-xl bg-gradient-to-br from-[#0f1923] to-[#0a1520] border border-white/20 p-4 shadow-2xl backdrop-blur-sm transition-all duration-200"
           style={{
@@ -567,9 +901,10 @@ interface PlayerOverviewProps {
   selectedPlayerId: PlayerId | null;
   players: PassNetworkProps["players"];
   teamColor: string;
+  onClearSelection: () => void;
 }
 
-function PlayerOverview({ network, selectedPlayerId, players, teamColor }: PlayerOverviewProps) {
+function PlayerOverview({ network, selectedPlayerId, players, teamColor, onClearSelection }: PlayerOverviewProps) {
   const playerStats = useMemo(() => {
     if (!selectedPlayerId) return null;
 
@@ -658,7 +993,16 @@ function PlayerOverview({ network, selectedPlayerId, players, teamColor }: Playe
   return (
     <div className="rounded-2xl border border-white/5 bg-gradient-to-br from-[#111d2a] to-[#0a1520] p-6 h-full flex flex-col shadow-xl">
       <div className="mb-5">
-        <p className="text-base font-bold text-white mb-1">Player Overview</p>
+        <div className="mb-1 flex items-center justify-between">
+          <p className="text-base font-bold text-white">Player Overview</p>
+          <button
+            type="button"
+            onClick={onClearSelection}
+            className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-medium text-white/80 hover:bg-white/10"
+          >
+            Unlock
+          </button>
+        </div>
         <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
       </div>
       
@@ -777,39 +1121,58 @@ export function PassNetwork({
 }: PassNetworkProps) {
   const [selectedTeam, setSelectedTeam] = useState<"home" | "away">("home");
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<PlayerId[]>([]);
-  const [minCount, setMinCount] = useState(2);
+  const [minCount, setMinCount] = useState(1);
   const [half, setHalf] = useState<Half>("all");
   const [direction, setDirection] = useState<"all" | "L2R" | "R2L">("all");
   const [selectedPlayerId, setSelectedPlayerId] = useState<PlayerId | null>(null);
 
-  // Get team players (simplified - show all players, filtering happens in buildPassNetwork by team in events)
-  const teamPlayers = useMemo(() => {
-    return players;
-  }, [players]);
+  // Build team player pools to avoid cross-team links in inferred receivers.
+  const { homePlayers, awayPlayers } = useMemo(() => {
+    const explicitHome = players.filter((p) => p.teamId !== undefined && p.teamId !== null && homeTeamId !== null && p.teamId === homeTeamId);
+    const explicitAway = players.filter((p) => p.teamId !== undefined && p.teamId !== null && awayTeamId !== null && p.teamId === awayTeamId);
+
+    // Fallback for legacy/demo data: infer by event ownership if teamId is missing.
+    if (explicitHome.length > 0 || explicitAway.length > 0) {
+      return { homePlayers: explicitHome, awayPlayers: explicitAway };
+    }
+
+    const homeIds = new Set(
+      events.filter((e) => e.team === "home" && e.playerId !== null).map((e) => String(e.playerId))
+    );
+    const awayIds = new Set(
+      events.filter((e) => e.team === "away" && e.playerId !== null).map((e) => String(e.playerId))
+    );
+    return {
+      homePlayers: players.filter((p) => homeIds.has(String(p.id))),
+      awayPlayers: players.filter((p) => awayIds.has(String(p.id))),
+    };
+  }, [players, events, homeTeamId, awayTeamId]);
+
+  const teamPlayers = selectedTeam === "home" ? homePlayers : awayPlayers;
 
   // Build networks
   const homeNetwork = useMemo(
     () =>
-      buildPassNetwork(events, players, "home", {
+      buildPassNetwork(events, homePlayers, "home", {
         teamId: "home",
         playerIds: selectedPlayerIds.length > 0 ? selectedPlayerIds : undefined,
         minCount,
         half,
         direction,
       }),
-    [events, players, selectedPlayerIds, minCount, half, direction]
+    [events, homePlayers, selectedPlayerIds, minCount, half, direction]
   );
 
   const awayNetwork = useMemo(
     () =>
-      buildPassNetwork(events, players, "away", {
+      buildPassNetwork(events, awayPlayers, "away", {
         teamId: "away",
         playerIds: selectedPlayerIds.length > 0 ? selectedPlayerIds : undefined,
         minCount,
         half,
         direction,
       }),
-    [events, players, selectedPlayerIds, minCount, half, direction]
+    [events, awayPlayers, selectedPlayerIds, minCount, half, direction]
   );
 
   const currentNetwork = selectedTeam === "home" ? homeNetwork : awayNetwork;
@@ -848,6 +1211,7 @@ export function PassNetwork({
                 onChange={(e) => {
                   setSelectedTeam(e.target.value as "home" | "away");
                   setSelectedPlayerId(null);
+                  setSelectedPlayerIds([]);
                 }}
                 className="w-full px-3 py-2.5 rounded-xl bg-[#0a1520] border border-white/5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all duration-200 hover:border-white/10"
               >
@@ -910,7 +1274,6 @@ export function PassNetwork({
                 className="w-full px-3 py-2 rounded-xl bg-[#0a1520] border border-white/5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all duration-200 hover:border-white/10"
                 size={3}
               >
-                <option value="">All Players</option>
                 {teamPlayers.map((p) => (
                   <option key={p.id} value={p.id.toString()}>
                     #{p.number || "?"} {p.name}
@@ -967,6 +1330,7 @@ export function PassNetwork({
           selectedPlayerId={selectedPlayerId}
           players={players}
           teamColor={teamColor}
+          onClearSelection={() => setSelectedPlayerId(null)}
         />
       </div>
     </div>

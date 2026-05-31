@@ -26,10 +26,30 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ ok: false, message: "playerIds array is required" }, { status: 400 });
   }
 
-  // Verify team exists
+  // Verify team exists and user has access
   const team = await prisma.team.findUnique({ where: { id: teamId } });
   if (!team) {
     return NextResponse.json({ ok: false, message: "Team not found" }, { status: 404 });
+  }
+
+  // Get user's team IDs to verify access
+  const userTeams = await prisma.userTeam.findMany({
+    where: { userId: user.id, status: "active" },
+    select: { teamId: true },
+  });
+  
+  const createdTeams = await prisma.team.findMany({
+    where: { createdById: user.id },
+    select: { id: true },
+  });
+  
+  const userTeamIds = [
+    ...userTeams.map((ut) => ut.teamId),
+    ...createdTeams.map((t) => t.id),
+  ];
+
+  if (!userTeamIds.includes(teamId)) {
+    return NextResponse.json({ ok: false, message: "You don't have access to this team" }, { status: 403 });
   }
 
   // Update all players to assign them to this team

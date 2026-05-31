@@ -18,12 +18,19 @@ export default function AdminSettingsPage() {
   useEffect(() => {
     async function fetchTeams() {
       try {
-        const res = await fetch("/api/teams");
+        // Add cache busting to ensure fresh data
+        const timestamp = Date.now();
+        const res = await fetch(`/api/teams?t=${timestamp}`);
         if (res.ok) {
           const data = await res.json();
           if (data.ok && data.teams) {
             setTeams(data.teams);
+            console.log("[AdminSettings] Loaded teams:", data.teams.length);
+          } else {
+            console.warn("[AdminSettings] No teams in response:", data);
           }
+        } else {
+          console.error("[AdminSettings] Failed to fetch teams:", res.status);
         }
       } catch (error) {
         console.error("[AdminSettings] Error:", error);

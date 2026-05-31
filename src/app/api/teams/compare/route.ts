@@ -42,10 +42,30 @@ export async function POST(request: NextRequest) {
     let team1: { id: number; name: string; league: string | null } | null = null;
     let team2: { id: number; name: string; league: string | null } | null = null;
 
+    // Get user's team IDs to verify access
+    const userTeams = await prisma.userTeam.findMany({
+      where: { userId: user.id, status: "active" },
+      select: { teamId: true },
+    });
+    
+    const createdTeams = await prisma.team.findMany({
+      where: { createdById: user.id },
+      select: { id: true },
+    });
+    
+    const userTeamIds = [
+      ...userTeams.map((ut) => ut.teamId),
+      ...createdTeams.map((t) => t.id),
+    ];
+
     if (body.team1Id) {
       const t1 = await prisma.team.findUnique({ where: { id: body.team1Id } });
       if (!t1) {
         return NextResponse.json({ ok: false, message: "Team 1 not found" }, { status: 404 });
+      }
+      // Verify user has access to this team
+      if (!userTeamIds.includes(t1.id)) {
+        return NextResponse.json({ ok: false, message: "You don't have access to Team 1" }, { status: 403 });
       }
       team1 = { id: t1.id, name: t1.name, league: t1.league };
     }
@@ -54,6 +74,10 @@ export async function POST(request: NextRequest) {
       const t2 = await prisma.team.findUnique({ where: { id: body.team2Id } });
       if (!t2) {
         return NextResponse.json({ ok: false, message: "Team 2 not found" }, { status: 404 });
+      }
+      // Verify user has access to this team
+      if (!userTeamIds.includes(t2.id)) {
+        return NextResponse.json({ ok: false, message: "You don't have access to Team 2" }, { status: 403 });
       }
       team2 = { id: t2.id, name: t2.name, league: t2.league };
     }

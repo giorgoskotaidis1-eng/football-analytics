@@ -25,18 +25,26 @@ const PRIORITY: Record<CleanEvent["kind"], number> = {
   Touch: 0,
 };
 
-const MIN_CONFIDENCE = 0.65;
-const MIN_GAP_SEC: Record<CleanEvent["kind"], number> = {
+const DEFAULT_MIN_CONFIDENCE = 0.65;
+const DEFAULT_MIN_GAP_SEC: Record<CleanEvent["kind"], number> = {
   Goal: 5,
   Shot: 3,
   Pass: 2,
   Touch: 1,
 };
 
-const WINDOW_SECONDS = 60;
-const TOP_K_PER_WINDOW = 2;
-const CROSS_CLASS_GAP = 2; // δευτ: αν υπάρχει ανώτερο event μέσα σε αυτό, πέτα το κατώτερο
+const DEFAULT_WINDOW_SECONDS = 60;
+const DEFAULT_TOP_K_PER_WINDOW = 2;
+const DEFAULT_CROSS_CLASS_GAP = 2; // δευτ: αν υπάρχει ανώτερο event μέσα σε αυτό, πέτα το κατώτερο
 const SCORE_MARGIN = 0.15;
+
+export type PostprocessOptions = {
+  minConfidence?: number;
+  minGapSec?: Record<CleanEvent["kind"], number>;
+  windowSeconds?: number;
+  topKPerWindow?: number;
+  crossClassGap?: number;
+};
 
 function normalizeLabel(lbl: string): CleanEvent["kind"] | null {
   const k = lbl.toLowerCase();
@@ -72,14 +80,17 @@ function upgradePass(ev: RawEvent, base: CleanEvent["kind"]): CleanEvent["kind"]
 }
 
 // Συγχώνευση ίδιων events κοντά χρονικά (κρατά το καλύτερο)
-function dedupeSame(events: CleanEvent[]): CleanEvent[] {
+function dedupeSame(
+  events: CleanEvent[],
+  minGapSec: Record<CleanEvent["kind"], number>
+): CleanEvent[] {
   const out: CleanEvent[] = [];
   for (const ev of events) {
     const last = out[out.length - 1];
     if (
       last &&
       ev.kind === last.kind &&
-      Math.abs(ev.timeSec - last.timeSec) < MIN_GAP_SEC[ev.kind]
+      Math.abs(ev.timeSec - last.timeSec) < minGapSec[ev.kind]
     ) {
       if (ev.confidence > last.confidence) out[out.length - 1] = ev;
       continue;
@@ -90,14 +101,14 @@ function dedupeSame(events: CleanEvent[]): CleanEvent[] {
 }
 
 // Αλληλοαποκλεισμός: αν υπάρχει ανώτερη κλάση πολύ κοντά, πέτα την κατώτερη
-function resolveCrossClass(events: CleanEvent[]): CleanEvent[] {
+function resolveCrossClass(events: CleanEvent[], crossClassGap: number): CleanEvent[] {
   const out: CleanEvent[] = [];
   for (const ev of events) {
     let keep = true;
 
     // αν υπάρχει ήδη ισχυρότερο πολύ κοντά, μην το κρατήσεις
     for (const kept of out) {
-      if (Math.abs(ev.timeSec - kept.timeSec) <= CROSS_CLASS_GAP) {
+      if (Math.abs(ev.timeSec - kept.timeSec) <= crossClassGap) {
         if (PRIORITY[kept.kind] > PRIORITY[ev.kind]) {
           keep = false;
           break;
@@ -122,10 +133,13 @@ function resolveCrossClass(events: CleanEvent[]): CleanEvent[] {
 }
 
 // Top-k ανά παράθυρο
-function topKPerWindow(events: CleanEvent[]): CleanEvent[] {
+function topKPerWindow(events: CleanEvent[], windowSeconds: number, topK: number): CleanEvent[] {
+  if (!Number.isFinite(topK)) return events;
+  if (topK <= 0) return [];
+  if (topK >= events.length) return events;
   const buckets = new Map<number, CleanEvent[]>();
   for (const ev of events) {
-    const b = Math.floor(ev.timeSec / WINDOW_SECONDS);
+    const b = Math.floor(ev.timeSec / Math.max(1, windowSeconds));
     if (!buckets.has(b)) buckets.set(b, []);
     buckets.get(b)!.push(ev);
   }
@@ -136,12 +150,22 @@ function topKPerWindow(events: CleanEvent[]): CleanEvent[] {
       if (a.confidence === b.confidence) return PRIORITY[b.kind] - PRIORITY[a.kind];
       return b.confidence - a.confidence;
     });
-    res.push(...arr.slice(0, TOP_K_PER_WINDOW));
+    res.push(...arr.slice(0, topK));
   }
   return res;
 }
 
-export function postprocessEvents(raw: RawEvent[], videoDurationSec: number): CleanEvent[] {
+export function postprocessEvents(
+  raw: RawEvent[],
+  videoDurationSec: number,
+  options: PostprocessOptions = {}
+): CleanEvent[] {
+  const minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+  const minGapSec = options.minGapSec ?? DEFAULT_MIN_GAP_SEC;
+  const windowSeconds = options.windowSeconds ?? DEFAULT_WINDOW_SECONDS;
+  const topKLimit = options.topKPerWindow ?? DEFAULT_TOP_K_PER_WINDOW;
+  const crossClassGap = options.crossClassGap ?? DEFAULT_CROSS_CLASS_GAP;
+
   let evs: CleanEvent[] = raw
     .map((ev) => {
       const base = normalizeLabel(ev.label);
@@ -155,7 +179,7 @@ export function postprocessEvents(raw: RawEvent[], videoDurationSec: number): Cl
         confidence: ev.confidence,
       } as CleanEvent;
     })
-    .filter((e): e is CleanEvent => !!e && e.confidence >= MIN_CONFIDENCE);
+    .filter((e): e is CleanEvent => !!e && e.confidence >= minConfidence);
 
   // ταξινόμηση: χρόνος -> προτεραιότητα -> confidence
   evs.sort((a, b) => {
@@ -164,9 +188,9 @@ export function postprocessEvents(raw: RawEvent[], videoDurationSec: number): Cl
     return b.confidence - a.confidence;
   });
 
-  evs = dedupeSame(evs);          // ίδια κλάση, κοντά
-  evs = resolveCrossClass(evs);   // ανώτερη κλάση κερδίζει σε κοντινό χρόνο
-  evs = topKPerWindow(evs);       // κόψε θόρυβο, κράτα τα 2 καλύτερα/60s
+  evs = dedupeSame(evs, minGapSec);                     // ίδια κλάση, κοντά
+  evs = resolveCrossClass(evs, crossClassGap);          // ανώτερη κλάση κερδίζει σε κοντινό χρόνο
+  evs = topKPerWindow(evs, windowSeconds, topKLimit); // κόψε θόρυβο, κράτα top-k/παράθυρο
 
   evs.sort((a, b) => a.timeSec - b.timeSec);
 

@@ -1,8 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const CreatePlaylistSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional().nullable(),
+  matchId: z.number().int().positive().optional().nullable(),
+});
+
+export async function GET() {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
+  }
+
+  const playlists = await prisma.playlist.findMany({
+    where: { userId: user.id },
+    orderBy: { updatedAt: "desc" },
+    include: {
+      match: {
+        select: {
+          id: true,
+          slug: true,
+          date: true,
+          homeTeam: { select: { name: true } },
+          awayTeam: { select: { name: true } },
+          homeTeamName: true,
+          awayTeamName: true,
+        },
+      },
+      _count: { select: { clips: true } },
+    },
+  });
+
+  return NextResponse.json({ ok: true, playlists });
+}
 
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
@@ -10,28 +45,68 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
   }
 
+  let body: unknown;
   try {
-    const body = await request.json();
-    const { name, description, matchId } = body;
+    body = await request.json();
+  } catch {
+    body = null;
+  }
 
-    if (!name || !name.trim()) {
-      return NextResponse.json({ ok: false, message: "Playlist name is required" }, { status: 400 });
-    }
-
-    // TODO: Create playlist record in database
-    // For now, we'll just return success
-    // You can add a Playlist model to Prisma schema later
-
-    return NextResponse.json({
-      ok: true,
-      message: "Playlist created successfully",
-    });
-  } catch (error) {
-    console.error("[playlists] Error:", error);
+  const parsed = CreatePlaylistSchema.safeParse(body);
+  if (!parsed.success) {
     return NextResponse.json(
-      { ok: false, message: "Failed to create playlist" },
-      { status: 500 }
+      {
+        ok: false,
+        code: "INVALID_INPUT",
+        message: parsed.error.issues[0]?.message ?? "Invalid playlist payload.",
+      },
+      { status: 400 }
     );
   }
+
+  const { name, description, matchId } = parsed.data;
+
+  if (matchId) {
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      select: { id: true },
+    });
+    if (!match) {
+      return NextResponse.json(
+        { ok: false, code: "MATCH_NOT_FOUND", message: "Selected match was not found." },
+        { status: 404 }
+      );
+    }
+  }
+
+  const playlist = await prisma.playlist.create({
+    data: {
+      userId: user.id,
+      name,
+      description: description || null,
+      matchId: matchId ?? null,
+    },
+    include: {
+      match: {
+        select: {
+          id: true,
+          slug: true,
+          date: true,
+          homeTeam: { select: { name: true } },
+          awayTeam: { select: { name: true } },
+          homeTeamName: true,
+          awayTeamName: true,
+        },
+      },
+      _count: { select: { clips: true } },
+    },
+  });
+
+  return NextResponse.json(
+    {
+      ok: true,
+      playlist,
+    }
+  );
 }
 

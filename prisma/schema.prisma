@@ -6,25 +6,32 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  name      String?
-  role      String?  // e.g. "head_coach", "analyst", "scout"
-  passwordHash String
-  emailVerified Boolean @default(false)
-  phone        String?
-  phoneVerified Boolean @default(false)
+  id             Int      @id @default(autoincrement())
+  email          String   @unique
+  name           String?
+  role           String? // e.g. "head_coach", "analyst", "scout"
+  passwordHash   String
+  emailVerified  Boolean  @default(false)
+  phone          String?
+  phoneVerified  Boolean  @default(false)
   profilePicture String? // URL to profile picture
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  /// Notification preference: "all" (default), "important", or "muted".
+  notificationPreference String   @default("all")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  /// Canonical Stripe Customer ID for this user (cus_…). One user ↔ one customer.
+  stripeCustomerId String? @unique
 
   // Billing / subscription (skeleton)
-  subscriptions Subscription[]
+  subscriptions  Subscription[]
+  paymentMethods PaymentMethod[]
+  playlists      Playlist[]
 
   // Auth tokens (skeleton)
   emailVerificationTokens EmailVerificationToken[]
@@ -32,151 +39,253 @@ model User {
   phoneVerificationCodes  PhoneVerificationCode[]
 
   // Relations
-  comments                Comment[]
-  sentMessages            Message[]  @relation("SentMessages")
-  receivedMessages        Message[]  @relation("ReceivedMessages")
-  watchlist               WatchlistPlayer[]
+  comments         Comment[]
+  sentMessages     Message[]         @relation("SentMessages")
+  receivedMessages Message[]         @relation("ReceivedMessages")
+  watchlist        WatchlistPlayer[]
+  teamMemberships  UserTeam[]
+  createdTeams     Team[]            @relation("TeamCreator")
+  sentInvitations  TeamInvitation[]  @relation("TeamInvitations")
+  notifications    Notification[]
+  playerFeedback   PlayerFeedback[]
+  uploadedFiles    UploadedFile[]
+  dataExports      DataExport[]
+  supportTickets   SupportTicket[]
+
+  @@index([email])
+  @@index([role])
 }
 
 model Team {
   id        Int      @id @default(autoincrement())
   name      String
   league    String?
-  style     String?  // e.g. "High press", "Fast transitions"
+  style     String? // e.g. "High press", "Fast transitions"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Owner/Creator of the team
+  createdById Int?
+  createdBy   User? @relation("TeamCreator", fields: [createdById], references: [id])
+
   players   Player[]
-  homeGames Match[]  @relation("HomeTeam")
-  awayGames Match[]  @relation("AwayTeam")
+  homeGames Match[]       @relation("HomeTeam")
+  awayGames Match[]       @relation("AwayTeam")
   lineups   MatchLineup[]
+  members   UserTeam[]
+  invitations TeamInvitation[]
+
+  @@index([name])
+  @@index([createdById])
 }
 
 model Player {
-  id        Int      @id @default(autoincrement())
-  name      String
-  slug      String   @unique
-  position  String
-  age       Int?
-  club      String?
+  id          Int     @id @default(autoincrement())
+  name        String
+  slug        String  @unique
+  position    String
+  age         Int?
+  club        String?
   nationality String?
-  foot      String?  // "Right", "Left", "Both"
-  number    Int?     // Jersey number
+  foot        String? // "Right", "Left", "Both"
+  number      Int? // Jersey number
 
   // Authentication for player dashboard
-  email     String?  @unique
+  email        String? @unique
   passwordHash String?
-  
+
   // Login tracking
   lastLoginAt DateTime?
-  isOnline    Boolean  @default(false)
+  isOnline    Boolean   @default(false)
 
   // Simple season metrics (per 90 or totals)
-  goals                    Int?    @default(0)
-  assists                  Int?    @default(0)
-  xg                       Float?  @default(0)
-  xag                      Float?  @default(0)
-  shotsPer90               Float?  @default(0)
-  keyPassesPer90           Float?  @default(0)
-  pressuresPer90           Float?  @default(0)
-  progressivePassesPer90   Float?  @default(0)
+  goals                      Int?   @default(0)
+  assists                    Int?   @default(0)
+  xg                         Float? @default(0)
+  xag                        Float? @default(0)
+  shotsPer90                 Float? @default(0)
+  keyPassesPer90             Float? @default(0)
+  pressuresPer90             Float? @default(0)
+  progressivePassesPer90     Float? @default(0)
   carriesIntoFinalThirdPer90 Float? @default(0)
-  defensiveDuelsWonPer90   Float?  @default(0)
+  defensiveDuelsWonPer90     Float? @default(0)
 
-  teamId    Int?
-  team      Team?    @relation(fields: [teamId], references: [id])
+  teamId Int?
+  team   Team? @relation(fields: [teamId], references: [id])
 
   matchEvents MatchEvent[]
   watchlist   WatchlistPlayer[]
+  feedback    PlayerFeedback[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([teamId])
+  @@index([name])
 }
 
 model Match {
-  id        Int      @id @default(autoincrement())
-  slug      String   @unique
+  id          Int      @id @default(autoincrement())
+  slug        String   @unique
   competition String
-  venue     String?
-  date      DateTime
+  venue       String?
+  date        DateTime
 
   // Teams can be optional - if not in system, use opponent names
   homeTeamId Int?
   awayTeamId Int?
-  homeTeam   Team?    @relation("HomeTeam", fields: [homeTeamId], references: [id])
-  awayTeam   Team?    @relation("AwayTeam", fields: [awayTeamId], references: [id])
-  
-  // Opponent names for teams not in the system
-  homeTeamName String?  // Name of home team if not registered
-  awayTeamName String?  // Name of away team if not registered
+  homeTeam   Team? @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam   Team? @relation("AwayTeam", fields: [awayTeamId], references: [id])
 
-  scoreHome Int?     @default(0)
-  scoreAway Int?     @default(0)
-  xgHome    Float?   @default(0)
-  xgAway    Float?   @default(0)
-  shotsHome Int?     @default(0)
-  shotsAway Int?     @default(0)
+  // Opponent names for teams not in the system
+  homeTeamName String? // Name of home team if not registered
+  awayTeamName String? // Name of away team if not registered
+
+  scoreHome      Int?   @default(0)
+  scoreAway      Int?   @default(0)
+  xgHome         Float? @default(0)
+  xgAway         Float? @default(0)
+  shotsHome      Int?   @default(0)
+  shotsAway      Int?   @default(0)
   possessionHome Float? @default(0) // Possession percentage (0-100)
   possessionAway Float? @default(0)
 
   videoPath String? // Path to video file (relative to project root)
 
-  events    MatchEvent[]
-  lineups   MatchLineup[]
+  events         MatchEvent[]
+  lineups        MatchLineup[]
+  playlists      Playlist[]
+  playlistClips  PlaylistClip[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([date])
+  @@index([competition])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
 }
 
 // Match events for analytics: shots, passes, touches, etc.
 model MatchEvent {
-  id        Int      @id @default(autoincrement())
-  matchId   Int
-  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  id      Int   @id @default(autoincrement())
+  matchId Int
+  match   Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
 
   // Event type: "shot", "pass", "touch", "tackle", "foul", etc.
-  type      String
-  
+  type String
+
   // Team: "home" or "away"
-  team      String
-  
+  team String
+
   // Player who performed the action (optional)
-  playerId  Int?
-  player    Player?  @relation(fields: [playerId], references: [id])
+  playerId Int?
+  player   Player? @relation(fields: [playerId], references: [id])
 
   // Coordinates on pitch (0-100, where 0,0 is top-left, 100,100 is bottom-right)
-  x         Float?   // Horizontal position (0 = left touchline, 100 = right touchline)
-  y         Float?   // Vertical position (0 = attacking end, 100 = defending end)
+  x Float? // Horizontal position (0 = left touchline, 100 = right touchline)
+  y Float? // Vertical position (0 = attacking end, 100 = defending end)
 
   // Event-specific data (JSON string for flexibility)
-  metadata  String?  // e.g., {"shotType": "open_play", "bodyPart": "foot", "outcome": "goal"}
+  metadata String? // e.g., {"shotType": "open_play", "bodyPart": "foot", "outcome": "goal"}
 
   // Time in match (minutes)
-  minute    Int?
-  
+  minute Int?
+
   // Calculated xG for shots
-  xg        Float?   @default(0)
+  xg Float? @default(0)
 
   createdAt DateTime @default(now())
+  playlistClips PlaylistClip[]
+
+  @@index([matchId])
+  @@index([playerId])
+  @@index([type])
+  @@index([minute])
+  @@index([matchId, playerId])
+  @@index([matchId, type])
+}
+
+model Playlist {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matchId     Int?
+  match       Match?   @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clips PlaylistClip[]
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+model PlaylistClip {
+  id           Int        @id @default(autoincrement())
+  playlistId   Int
+  playlist     Playlist   @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  matchId      Int
+  match        Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  matchEventId Int?
+  matchEvent   MatchEvent? @relation(fields: [matchEventId], references: [id], onDelete: SetNull)
+  title        String
+  startSec     Int
+  endSec       Int
+  position     Int        @default(0)
+  createdAt    DateTime   @default(now())
+
+  @@index([playlistId, position])
+  @@index([matchId])
 }
 
 // Simple subscription model for billing skeleton.
 // Your payment integration can store provider IDs and sync status here.
 model Subscription {
-  id                Int      @id @default(autoincrement())
-  userId            Int
-  user              User     @relation(fields: [userId], references: [id])
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
-  plan              String   // e.g. "free", "pro_monthly", "elite" (can be enum later)
-  status            String   @default("active") // e.g. "active", "past_due", "canceled"
-  currentPeriodEnd  DateTime?
+  plan             String // e.g. "free", "pro_monthly", "elite" (can be enum later)
+  status           String    @default("active") // e.g. "active", "past_due", "canceled"
+  currentPeriodEnd DateTime?
 
-  provider          String?  // e.g. "stripe"
-  providerCustomerId    String?
+  provider               String? // e.g. "stripe"
+  providerCustomerId     String?
   providerSubscriptionId String?
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Saved card / payment instrument for a user.
+/// We never store full PAN or CVV — only display metadata + provider IDs.
+model PaymentMethod {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  brand          String // "visa", "mastercard", "amex", "unknown"
+  last4          String // last 4 digits, used only for display
+  expMonth       Int
+  expYear        Int
+  cardholderName String?
+  billingEmail   String?
+
+  /// Marks the card as the default for new charges. Only one per user should be true.
+  isDefault Boolean @default(false)
+
+  /// "internal" for self-managed cards; "stripe" when linked to a Stripe Payment Method.
+  provider                String  @default("internal")
+  providerPaymentMethodId String? // pm_… when provider = "stripe"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, isDefault])
 }
 
 model EmailVerificationToken {
@@ -204,31 +313,40 @@ model MessageThread {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  messages  Message[]
+  messages Message[]
 }
 
 model Message {
-  id          Int      @id @default(autoincrement())
-  threadId    Int
-  thread      MessageThread @relation(fields: [threadId], references: [id])
-  fromUserId  Int
-  fromUser    User     @relation("SentMessages", fields: [fromUserId], references: [id])
-  toUserId    Int
-  toUser      User     @relation("ReceivedMessages", fields: [toUserId], references: [id])
-  body        String
-  createdAt   DateTime @default(now())
-  readAt      DateTime?
+  id         Int           @id @default(autoincrement())
+  threadId   Int
+  thread     MessageThread @relation(fields: [threadId], references: [id])
+  fromUserId Int
+  fromUser   User          @relation("SentMessages", fields: [fromUserId], references: [id])
+  toUserId   Int
+  toUser     User          @relation("ReceivedMessages", fields: [toUserId], references: [id])
+  body       String
+  createdAt  DateTime      @default(now())
+  readAt     DateTime?
+
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([threadId])
+  @@index([createdAt])
 }
 
 // Comments skeleton: attach staff comments to players or matches.
 model Comment {
-  id          Int      @id @default(autoincrement())
-  authorId    Int
-  author      User     @relation(fields: [authorId], references: [id])
-  targetType  String   // e.g. "player" or "match"
-  targetSlug  String
-  body        String
-  createdAt   DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  authorId   Int
+  author     User     @relation(fields: [authorId], references: [id])
+  targetType String // e.g. "player" or "match"
+  targetSlug String
+  body       String
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetSlug])
+  @@index([authorId])
+  @@index([createdAt])
 }
 
 model PasswordResetToken {
@@ -241,13 +359,13 @@ model PasswordResetToken {
 }
 
 model MatchLineup {
-  id        Int      @id @default(autoincrement())
+  id        Int    @id @default(autoincrement())
   matchId   Int
-  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  match     Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
   teamId    Int
-  team      Team     @relation(fields: [teamId], references: [id])
-  formation String   // e.g. "4-4-2", "4-3-3"
-  positions String   // JSON array of {playerId, x, y}
+  team      Team   @relation(fields: [teamId], references: [id])
+  formation String // e.g. "4-4-2", "4-3-3"
+  positions String // JSON array of {playerId, x, y}
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -262,11 +380,142 @@ model WatchlistPlayer {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   playerId  Int
   player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  notes     String?  // Optional notes for scouting
+  notes     String? // Optional notes for scouting
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([userId, playerId])
   @@index([userId])
   @@index([playerId])
+}
+
+// Coach/scout feedback for a player. Strengths/improvements are JSON-encoded
+// string arrays (sqlite-friendly, mirrors the MatchEvent.metadata pattern).
+model PlayerFeedback {
+  id           Int      @id @default(autoincrement())
+  authorId     Int
+  author       User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  playerId     Int
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  strengths    String   @default("[]")
+  improvements String   @default("[]")
+  rating       Float?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([authorId, createdAt])
+  @@index([playerId, createdAt])
+}
+
+// Many-to-many relationship: Users can belong to multiple teams, teams can have multiple staff
+model UserTeam {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teamId Int
+  team   Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  // Role within this specific team (can be different from user's global role)
+  role String? // e.g. "Head Coach", "Assistant Coach", "Analyst", "Scout", "Physio"
+
+  // Invitation system
+  invitedBy Int? // User who invited this member
+  status    String @default("active") // "pending", "active", "inactive"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, teamId])
+  @@index([userId])
+  @@index([teamId])
+  @@index([status])
+}
+
+// Team Invitations - for users who don't have account yet
+model TeamInvitation {
+  id        Int      @id @default(autoincrement())
+  email     String
+  teamId    Int
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  role      String   // e.g. "Head Coach", "Scout", "Analyst"
+  invitedBy Int      // User who sent the invitation
+  inviter   User     @relation("TeamInvitations", fields: [invitedBy], references: [id])
+  token     String   @unique // Unique token for accepting invitation
+  status    String   @default("pending") // "pending", "accepted", "declined", "expired"
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([teamId])
+  @@index([status])
+  @@index([token])
+}
+
+// User-uploaded files (documents, reports, schedules, generic data files).
+model UploadedFile {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  originalName String
+  storageKey   String   // path under uploads/files/<userId>/
+  mimeType     String
+  size         Int
+  category     String   @default("other") // "report" | "schedule" | "data" | "other"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([userId, category])
+}
+
+// Data exports generated by the user (CSV, JSON, etc.).
+model DataExport {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source       String    // "match_events" | "squad_metrics" | "feedback" | "all"
+  format       String    // "csv" | "json"
+  scopeLabel   String    // human-readable scope summary
+  status       String    @default("ready") // "queued" | "processing" | "ready" | "failed"
+  downloadKey  String?
+  fileSize     Int?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@index([userId, createdAt])
+}
+
+// Support tickets created by users.
+model SupportTicket {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   String
+  body      String
+  priority  String   @default("normal") // "normal" | "high" | "critical"
+  status    String   @default("open")   // "open" | "in_progress" | "resolved"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+// In-app Notifications
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // "invitation", "team_update", "match_added", etc.
+  title     String
+  message   String
+  link      String?  // Optional link to related page
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
 }

@@ -5,6 +5,14 @@ import { EventItem } from "../types/spotlight";
 
 // Event type icons and categories
 const EVENT_CATEGORIES = {
+  goals: {
+    label: "Goals",
+    icon: "🥅",
+    types: ["goal"],
+    color: "text-emerald-400",
+    bgColor: "bg-emerald-500/10",
+    borderColor: "border-emerald-500/30",
+  },
   shots: {
     label: "Shots",
     icon: "🎯",
@@ -32,7 +40,7 @@ const EVENT_CATEGORIES = {
   defensive: {
     label: "Defensive",
     icon: "🛡️",
-    types: ["tackle"],
+    types: ["tackle", "interception", "clearance", "block"],
     color: "text-yellow-400",
     bgColor: "bg-yellow-500/10",
     borderColor: "border-yellow-500/30",
@@ -74,6 +82,10 @@ function getEventType(ev: EventItem): string {
   if (lower.includes("pass")) return "pass";
   if (lower.includes("touch")) return "touch";
   if (lower.includes("tackle")) return "tackle";
+  if (lower.includes("interception")) return "interception";
+  if (lower.includes("clearance")) return "clearance";
+  if (lower.includes("block")) return "block";
+  if (lower.includes("goal")) return "goal";
   if (lower.includes("corner")) return "corner";
   if (lower.includes("free kick") || lower.includes("free_kick")) return "free_kick";
   if (lower.includes("foul")) return "foul";
@@ -100,10 +112,14 @@ export function EventList({
   events,
   selectedId,
   onSelect,
+  selectedClipIds,
+  onToggleClipSelection,
 }: {
   events: EventItem[];
   selectedId?: string;
   onSelect: (ev: EventItem) => void;
+  selectedClipIds?: Set<string>;
+  onToggleClipSelection?: (ev: EventItem) => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<keyof typeof EVENT_CATEGORIES>("all");
 
@@ -119,7 +135,9 @@ export function EventList({
     events.forEach((ev) => {
       const type = getEventType(ev);
       const category = getCategoryForType(type);
-      grouped[category].push(ev);
+      if (category !== "all") {
+        grouped[category].push(ev);
+      }
       grouped.all.push(ev);
     });
 
@@ -184,15 +202,24 @@ export function EventList({
         ) : (
           filteredEvents.map((ev) => {
             const isSelected = ev.id === selectedId;
+            const isClipSelected = selectedClipIds?.has(ev.id) ?? false;
             const eventType = getEventType(ev);
             const icon = getEventIcon(eventType);
             const category = getCategoryForType(eventType);
             const catStyle = EVENT_CATEGORIES[category];
 
             return (
-              <button
+              <div
                 key={ev.id}
                 onClick={() => onSelect(ev)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelect(ev);
+                  }
+                }}
                 className={`
                   relative px-4 py-3 text-left rounded-lg transition-all duration-200
                   border min-h-[44px] flex items-center gap-3
@@ -228,7 +255,23 @@ export function EventList({
                 {isSelected && (
                   <div className={`ml-2 w-2 h-2 rounded-full ${catStyle.color.replace("text-", "bg-")} animate-pulse flex-shrink-0`}></div>
                 )}
-              </button>
+                {onToggleClipSelection && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleClipSelection(ev);
+                    }}
+                    className={`ml-2 rounded-md border px-2 py-1 text-[10px] font-semibold transition ${
+                      isClipSelected
+                        ? "border-emerald-500/50 bg-emerald-500/20 text-emerald-300"
+                        : "border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700/70"
+                    }`}
+                  >
+                    {isClipSelected ? "Selected" : "Add"}
+                  </button>
+                )}
+              </div>
             );
           })
         )}

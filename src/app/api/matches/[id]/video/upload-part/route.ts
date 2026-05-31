@@ -8,6 +8,18 @@ import { existsSync } from "fs";
 export const runtime = "nodejs";
 export const maxDuration = 300; // 5 minutes per part
 
+async function resolveMatchId(idParam: string): Promise<number | null> {
+  if (/^\d+$/.test(idParam)) {
+    return parseInt(idParam, 10);
+  }
+
+  const match = await prisma.match.findUnique({
+    where: { slug: idParam },
+    select: { id: true },
+  });
+  return match?.id ?? null;
+}
+
 /**
  * Upload a single part of multipart upload
  * Stores part temporarily until all parts are uploaded
@@ -19,16 +31,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const { id } = await params;
-  const matchId = parseInt(id);
+  const matchId = await resolveMatchId(id);
 
-  if (isNaN(matchId)) {
-    return NextResponse.json({ ok: false, message: "Invalid match ID" }, { status: 400 });
-  }
-
-  // Verify match exists
-  const match = await prisma.match.findUnique({ where: { id: matchId } });
-  if (!match) {
-    return NextResponse.json({ ok: false, message: "Match not found" }, { status: 404 });
+  if (!matchId) {
+    return NextResponse.json({ ok: false, message: "Invalid match reference" }, { status: 400 });
   }
 
   try {

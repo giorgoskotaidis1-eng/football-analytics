@@ -72,6 +72,11 @@ export function SidebarUserProfile() {
     );
   }
 
+  // Don't show user profile if not logged in
+  if (!user) {
+    return null;
+  }
+
   return (
     <div className="mb-6 space-y-4 rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-5 shadow-xl">
       <div className="flex items-center gap-3">

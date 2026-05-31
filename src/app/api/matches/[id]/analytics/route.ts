@@ -56,6 +56,32 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ ok: false, message: "Match not found" }, { status: 404 });
   }
 
+  // Get user's team IDs to verify access
+  const userTeams = await prisma.userTeam.findMany({
+    where: { userId: user.id, status: "active" },
+    select: { teamId: true },
+  });
+  
+  const createdTeams = await prisma.team.findMany({
+    where: { createdById: user.id },
+    select: { id: true },
+  });
+  
+  const userTeamIds = [
+    ...userTeams.map((ut) => ut.teamId),
+    ...createdTeams.map((t) => t.id),
+  ];
+
+  // Verify user has access to this match
+  const hasAccess = userTeamIds.length > 0 && (
+    (match.homeTeamId && userTeamIds.includes(match.homeTeamId)) ||
+    (match.awayTeamId && userTeamIds.includes(match.awayTeamId))
+  );
+
+  if (!hasAccess && userTeamIds.length > 0) {
+    return NextResponse.json({ ok: false, message: "You don't have access to this match" }, { status: 403 });
+  }
+
   // Check cache first
   const cacheKey = `analytics-${matchId}`;
   const cached = analyticsCache.get(cacheKey);

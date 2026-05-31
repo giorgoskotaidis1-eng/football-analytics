@@ -15,9 +15,12 @@ import {
   type MultipartUploadState,
   type UploadProgress,
 } from "@/lib/multipart-upload";
+import { MAX_MATCH_VIDEO_UPLOAD_BYTES } from "@/lib/video-upload-limits";
+import { parseApiResponseJson, parseApiErrorBody } from "@/lib/parse-api-response";
 
 interface VideoUploadProps {
   matchId: number;
+  matchRouteId?: string;
   homeTeamId?: number | null;
   awayTeamId?: number | null;
   homeTeamName?: string | null;
@@ -28,8 +31,9 @@ interface VideoUploadProps {
 const MAX_PARALLEL_PARTS = 5;
 const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB default
 
-export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName, onAnalysisComplete }: VideoUploadProps) {
+export function VideoUpload({ matchId, matchRouteId, homeTeamId, awayTeamId, homeTeamName, awayTeamName, onAnalysisComplete }: VideoUploadProps) {
   const { t } = useTranslation();
+  const matchApiId = encodeURIComponent(String(matchRouteId ?? matchId));
   
   // Load persisted settings from localStorage
   const storageKey = `videoUpload_${matchId}`;
@@ -106,7 +110,7 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
     } catch (e) {
       console.warn("[VideoUpload] Failed to save settings:", e);
     }
-  }, [useUrl, enableTranscode, leftSideTeam, storageKey]);
+  }, [useUrl, enableTranscode, leftSideTeam, customStoragePath, useCustomPath, storageKey]);
 
   // Check for resumable upload on mount
   useEffect(() => {
@@ -176,7 +180,7 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
     const teamRightId = leftSideTeam === "home" ? awayTeamId : homeTeamId;
     const attackDirection = "left-to-right"; // Left side attacks towards right (y=0 -> y=100)
 
-    const response = await fetch(`/api/matches/${matchId}/video/analyze`, {
+    const response = await fetch(`/api/matches/${matchApiId}/video/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -187,6 +191,8 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
         teamRightId,
         attackDirection,
         normalize: true,
+        // Replace old match analysis events every run
+        replaceExisting: true,
       }),
       signal,
     });
@@ -197,7 +203,14 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
       return;
     }
 
-    const result = await response.json().catch(() => ({ ok: false, message: t("failedToParseResponse") }));
+    let result: { ok?: boolean; message?: string };
+    try {
+      result = await parseApiResponseJson(response);
+    } catch (e: any) {
+      setError(e?.message || t("failedToParseResponse"));
+      setUploading(false);
+      return;
+    }
 
     if (response.ok && result.ok) {
       setProgress({ uploaded: 100, total: 100, percentage: 100, speed: 0, eta: 0, activeParts: 0 });
@@ -234,10 +247,10 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
     startTimeRef.current = Date.now();
     previousProgressRef.current = { uploaded: 0, time: startTimeRef.current };
 
-    // Check file size (max 2GB)
-    const maxSize = 2 * 1024 * 1024 * 1024;
-    if (file.size > maxSize) {
-      setError("File size exceeds 2GB limit");
+    if (file.size > MAX_MATCH_VIDEO_UPLOAD_BYTES) {
+      setError(
+        `File size exceeds ${MAX_MATCH_VIDEO_UPLOAD_BYTES / (1024 * 1024 * 1024)}GB limit`
+      );
       setUploading(false);
       return;
     }
@@ -248,15 +261,15 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
 
     // Initialize new multipart upload
     const chunkSize = calculateChunkSize(file.size);
-    const chunks = createChunks(file.size, chunkSize);
 
-    const initResponse = await fetch(`/api/matches/${matchId}/video/upload-init`, {
+    const initResponse = await fetch(`/api/matches/${matchApiId}/video/upload-init`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         fileName: file.name,
         fileSize: file.size,
         chunkSize,
+        customStoragePath: useCustomPath && customStoragePath ? customStoragePath : undefined,
       }),
       signal,
     });
@@ -267,7 +280,14 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
       return;
     }
 
-    const initResult = await initResponse.json();
+    let initResult: { ok?: boolean; message?: string; uploadId?: string; chunkSize?: number; parts?: any[] };
+    try {
+      initResult = await parseApiResponseJson(initResponse);
+    } catch (e: any) {
+      setError(e?.message || t("failedToParseResponse"));
+      setUploading(false);
+      return;
+    }
     if (!initResult.ok) {
       setError(initResult.message || "Failed to initialize upload");
       setUploading(false);
@@ -280,8 +300,11 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
       fileName: file.name,
       fileSize: file.size,
       chunkSize: initResult.chunkSize,
-      parts: chunks.map((chunk, idx) => ({
-        ...chunk,
+      parts: (initResult.parts || createChunks(file.size, initResult.chunkSize || chunkSize)).map((part: any) => ({
+        partNumber: part.partNumber,
+        start: part.start,
+        end: part.end,
+        uploadUrl: part.uploadUrl,
         uploaded: false,
       })),
       completedParts: 0,
@@ -289,20 +312,26 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
     };
 
     // Check for already uploaded parts (resume)
-    const statusResponse = await fetch(
-      `/api/matches/${matchId}/video/upload-status?uploadId=${uploadState.uploadId}`,
-      { signal }
-    );
+    const statusBase = `/api/matches/${matchApiId}/video/upload-status?uploadId=${encodeURIComponent(uploadState.uploadId)}`;
+    const statusUrl =
+      useCustomPath && customStoragePath
+        ? `${statusBase}&customStoragePath=${encodeURIComponent(customStoragePath)}`
+        : statusBase;
+    const statusResponse = await fetch(statusUrl, { signal });
     if (statusResponse.ok) {
-      const statusResult = await statusResponse.json();
-      if (statusResult.uploadedParts) {
-        statusResult.uploadedParts.forEach((partNum: number) => {
-          const part = uploadState.parts.find((p) => p.partNumber === partNum);
-          if (part) {
-            part.uploaded = true;
-            uploadState.completedParts++;
-          }
-        });
+      try {
+        const statusResult = await parseApiResponseJson<{ uploadedParts?: number[] }>(statusResponse);
+        if (statusResult.uploadedParts) {
+          statusResult.uploadedParts.forEach((partNum: number) => {
+            const part = uploadState.parts.find((p) => p.partNumber === partNum);
+            if (part) {
+              part.uploaded = true;
+              uploadState.completedParts++;
+            }
+          });
+        }
+      } catch {
+        /* resume optional; ignore bad status payload */
       }
     }
 
@@ -322,14 +351,23 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
       activeParts: 0,
     });
 
-    // Upload parts with parallel limit
+    // Upload parts with parallel limit (queue-based workers; avoids recursive worker re-entry)
     const uploadPromises: Promise<void>[] = [];
     let currentIndex = 0;
 
-    const uploadNextPart = async (): Promise<void> => {
-      while (currentIndex < partsToUpload.length && !signal.aborted) {
-        const part = partsToUpload[currentIndex++];
-        const partIndex = part.partNumber - 1;
+    const getNextPart = () => {
+      if (currentIndex >= partsToUpload.length) return null;
+      const next = partsToUpload[currentIndex];
+      currentIndex += 1;
+      return next;
+    };
+
+    const uploadWorker = async (): Promise<void> => {
+      while (!signal.aborted) {
+        const part = getNextPart();
+        if (!part) {
+          return;
+        }
 
         // Update active parts count
         setProgress((prev) => ({ ...prev, activeParts: currentIndex - uploadState.completedParts }));
@@ -342,9 +380,12 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
 
           // Upload part with retry
           const etag = await retryWithBackoff(async () => {
+            const baseUploadUrl = part.uploadUrl
+              ? part.uploadUrl
+              : `/api/matches/${matchApiId}/video/upload-part?uploadId=${uploadState.uploadId}&partNumber=${part.partNumber}`;
             const uploadUrl = useCustomPath && customStoragePath
-              ? `/api/matches/${matchId}/video/upload-part?uploadId=${uploadState.uploadId}&partNumber=${part.partNumber}&customStoragePath=${encodeURIComponent(customStoragePath)}`
-              : `/api/matches/${matchId}/video/upload-part?uploadId=${uploadState.uploadId}&partNumber=${part.partNumber}`;
+              ? `${baseUploadUrl}${baseUploadUrl.includes("?") ? "&" : "?"}customStoragePath=${encodeURIComponent(customStoragePath)}`
+              : baseUploadUrl;
             const partResponse = await fetch(uploadUrl, {
               method: "POST",
               body: partFormData,
@@ -352,11 +393,21 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
             });
 
             if (!partResponse.ok) {
-              const errorData = await partResponse.json().catch(() => ({}));
-              throw new Error(errorData.message || "Failed to upload part");
+              const errorData = await parseApiErrorBody(partResponse);
+              const message = errorData.message || "Failed to upload part";
+              const nonRetryable =
+                partResponse.status >= 400 &&
+                partResponse.status < 500 &&
+                partResponse.status !== 408 &&
+                partResponse.status !== 429;
+
+              const error: any = new Error(message);
+              error.nonRetryable = nonRetryable;
+              error.status = partResponse.status;
+              throw error;
             }
 
-            const partResult = await partResponse.json();
+            const partResult = await parseApiResponseJson<{ etag?: string }>(partResponse);
             return partResult.etag;
           }, 3, 1000);
 
@@ -392,13 +443,21 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
           // Save state for resume
           saveUploadState(uploadState);
           uploadStateRef.current = uploadState;
-
-          // Upload next part
-          await uploadNextPart();
         } catch (err: any) {
           if (err.name === "AbortError") {
             throw err;
           }
+          
+          // Stop all upload workers immediately on fatal errors like 404 Match not found.
+          if (err?.nonRetryable) {
+            if (abortControllerRef.current) {
+              abortControllerRef.current.abort();
+            }
+            clearUploadState(matchId, uploadState.uploadId);
+            uploadStateRef.current = null;
+            throw err;
+          }
+
           console.error(`[VideoUpload] Part ${part.partNumber} upload failed:`, err);
           // Retry will be handled by retryWithBackoff, but if it still fails, we continue
           // The part will remain unuploaded and can be resumed later
@@ -408,7 +467,7 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
 
     // Start parallel uploads
     for (let i = 0; i < Math.min(MAX_PARALLEL_PARTS, partsToUpload.length); i++) {
-      uploadPromises.push(uploadNextPart());
+      uploadPromises.push(uploadWorker());
     }
 
     try {
@@ -421,7 +480,7 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
       }
 
       // All parts uploaded, complete multipart upload
-      const completeResponse = await fetch(`/api/matches/${matchId}/video/upload-complete`, {
+      const completeResponse = await fetch(`/api/matches/${matchApiId}/video/upload-complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -442,7 +501,14 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
         return;
       }
 
-      const completeResult = await completeResponse.json();
+      let completeResult: { ok?: boolean; message?: string; videoPath?: string };
+      try {
+        completeResult = await parseApiResponseJson(completeResponse);
+      } catch (e: any) {
+        setError(e?.message || t("failedToParseResponse"));
+        setUploading(false);
+        return;
+      }
       if (!completeResult.ok) {
         setError(completeResult.message || "Failed to complete upload");
         setUploading(false);
@@ -478,7 +544,7 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
         setTranscodeProgress(0);
         
         try {
-          const transcodeResponse = await fetch(`/api/matches/${matchId}/video/transcode`, {
+          const transcodeResponse = await fetch(`/api/matches/${matchApiId}/video/transcode`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ videoPath: completeResult.videoPath }),
@@ -491,8 +557,14 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
             return;
           }
           
-          const transcodeResult = await transcodeResponse.json();
-          
+          let transcodeResult: { ok?: boolean; message?: string; videoPath?: string };
+          try {
+            transcodeResult = await parseApiResponseJson(transcodeResponse);
+          } catch (e: any) {
+            console.warn("[VideoUpload] Transcode response not JSON:", e?.message);
+            transcodeResult = { ok: false, message: e?.message };
+          }
+
           if (transcodeResponse.ok && transcodeResult.ok) {
             finalVideoPath = transcodeResult.videoPath;
             console.log("[VideoUpload] Video transcoded successfully:", finalVideoPath);
@@ -515,7 +587,7 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
       const teamRightId = leftSideTeam === "home" ? awayTeamId : homeTeamId;
       const attackDirection = "left-to-right"; // Left side attacks towards right (y=0 -> y=100)
 
-      const analyzeResponse = await fetch(`/api/matches/${matchId}/video/analyze`, {
+      const analyzeResponse = await fetch(`/api/matches/${matchApiId}/video/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -527,6 +599,8 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
           teamRightId,
           attackDirection,
           normalize: true,
+          // Ensure each new analysis replaces old analysis results (prevents "previous analyses" showing up)
+          replaceExisting: true,
         }),
         signal,
       });
@@ -537,7 +611,23 @@ export function VideoUpload({ matchId, homeTeamId, awayTeamId, homeTeamName, awa
         return;
       }
 
-      const analyzeResult = await analyzeResponse.json();
+      let analyzeResult: { ok?: boolean; message?: string; error?: string; analysis?: { eventsDetected?: number } };
+      try {
+        analyzeResult = await parseApiResponseJson(analyzeResponse);
+      } catch (e: any) {
+        setError(e?.message || t("failedToParseResponse"));
+        setAnalyzing(false);
+        return;
+      }
+      if (!analyzeResponse.ok || !analyzeResult?.ok) {
+        const apiError =
+          analyzeResult?.error ||
+          analyzeResult?.message ||
+          t("analysisFailed");
+        setError(apiError);
+        setAnalyzing(false);
+        return;
+      }
       await handleAnalysisComplete(analyzeResult);
     } catch (err: any) {
       if (err.name === "AbortError") {

@@ -84,15 +84,17 @@ export default function TeamsPage() {
 
   async function fetchTeams() {
     try {
-      const res = await fetch("/api/teams");
+      // Add cache busting to ensure fresh data
+      const timestamp = Date.now();
+      const res = await fetch(`/api/teams?t=${timestamp}`);
       if (res.ok) {
         const data = await res.json();
         if (data.ok) {
-          setTeams(data.teams);
+          setTeams(data.teams || []);
         }
       }
-    } catch {
-      // ignore errors
+    } catch (error) {
+      console.error("Failed to fetch teams:", error);
     } finally {
       setLoading(false);
     }
@@ -231,7 +233,19 @@ export default function TeamsPage() {
         toast.success(t("teamAddedSuccessfully"));
         reset();
         setShowAddTeam(false);
-        fetchTeams();
+        // Immediately add the new team to state for instant UI update
+        if (result.team) {
+          setTeams((prev) => {
+            // Check if team already exists to avoid duplicates
+            const exists = prev.some((t) => t.id === result.team.id);
+            if (exists) return prev;
+            return [...prev, result.team];
+          });
+        }
+        // Also fetch to ensure we have latest data with all counts
+        setTimeout(() => {
+          fetchTeams();
+        }, 100);
       } else {
         toast.error(result.message || t("failedToAddTeam"));
       }
@@ -289,6 +303,15 @@ export default function TeamsPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                   </svg>
                   {t("compareTeams")}
+                </Link>
+                <Link
+                  href="/admin/staff"
+                  className="flex items-center gap-2 rounded-lg border border-purple-500/30 bg-gradient-to-r from-purple-500/20 to-purple-600/20 px-5 py-3 text-sm font-semibold text-purple-200 transition-all hover:from-purple-500/30 hover:to-purple-600/30 hover:border-purple-500/50 hover:scale-105"
+                >
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                  </svg>
+{t("inviteStaff")}
                 </Link>
                 <button
                   onClick={() => setShowAddTeam(true)}
@@ -538,15 +561,23 @@ export default function TeamsPage() {
                   <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-4">
                     <div className="mb-2 flex items-center justify-between">
                       <p className="text-[11px] font-medium text-slate-700 dark:text-slate-300">{t("players")}</p>
-                      <button
-                        onClick={() => {
-                          setShowAddPlayersModal(team.id);
-                          setSelectedPlayerIds([]);
-                        }}
-                        className="h-6 rounded-md bg-emerald-500 px-3 text-[10px] font-semibold text-white shadow-sm transition hover:bg-emerald-400"
-                      >
-                        + {t("addPlayers")}
-                      </button>
+                      <div className="flex gap-2">
+                        <Link
+                          href="/admin/staff"
+                          className="h-6 rounded-md border border-purple-500/30 bg-gradient-to-r from-purple-500/20 to-purple-600/20 px-3 text-[10px] font-semibold text-purple-200 shadow-sm transition hover:from-purple-500/30 hover:to-purple-600/30"
+                        >
+{t("invite")}
+                        </Link>
+                        <button
+                          onClick={() => {
+                            setShowAddPlayersModal(team.id);
+                            setSelectedPlayerIds([]);
+                          }}
+                          className="h-6 rounded-md bg-emerald-500 px-3 text-[10px] font-semibold text-white shadow-sm transition hover:bg-emerald-400"
+                        >
+                          + {t("addPlayers")}
+                        </button>
+                      </div>
                     </div>
                     {teamWithPlayers.players && teamWithPlayers.players.length > 0 ? (
                       <div className="space-y-2 max-h-60 overflow-y-auto">

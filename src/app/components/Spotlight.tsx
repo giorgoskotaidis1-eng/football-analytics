@@ -7,6 +7,8 @@ import { VideoPlayer } from "./VideoPlayer";
 import { EventList } from "./EventList";
 import { Pitch } from "./Pitch";
 import { postprocessEvents, RawEvent } from "@/services/events/postprocessEvents";
+import { parseApiResponseJson } from "@/lib/parse-api-response";
+import toast from "react-hot-toast";
 
 interface SpotlightProps {
   events: EventItem[];
@@ -15,6 +17,36 @@ interface SpotlightProps {
   homeTeamId?: number | null;
   awayTeamId?: number | null;
   formation?: string;
+  initialMinute?: number;
+  /**
+   * Total video duration in seconds. Used by event post-processing windowing.
+   * If omitted we estimate from the events themselves (max timeSec × 1.1)
+   * with a final fallback of 90 minutes so we never under-window real matches.
+   */
+  videoDurationSec?: number;
+}
+
+type PlaylistOption = { id: number; name: string };
+
+/** Safety net: a full football match never exceeds ~90'+ extra time. */
+const FALLBACK_MAX_DURATION_SEC = 90 * 60;
+
+function resolveVideoDurationSec(
+  explicit: number | undefined,
+  events: { timeSec?: number | null }[]
+): number {
+  if (typeof explicit === "number" && explicit > 0) return explicit;
+  let maxTime = 0;
+  for (const ev of events) {
+    if (typeof ev.timeSec === "number" && ev.timeSec > maxTime) {
+      maxTime = ev.timeSec;
+    }
+  }
+  if (maxTime > 0) {
+    // 10% headroom so the last events are not on the boundary.
+    return Math.ceil(maxTime * 1.1);
+  }
+  return FALLBACK_MAX_DURATION_SEC;
 }
 
 // Helper to convert old Event format to EventItem
@@ -40,18 +72,21 @@ export function Spotlight({
   homeTeamId,
   awayTeamId,
   formation = "4-4-2",
+  initialMinute,
+  videoDurationSec: videoDurationSecProp,
 }: SpotlightProps) {
+  type TeamSide = "home" | "away";
+  type SpotlightLineupEntry = LineupEntry & { team: TeamSide };
   // Convert events to EventItem format and apply post-processing
   const events: EventItem[] = useMemo(() => {
     // Check if events are already in EventItem format
     if (rawEvents.length > 0 && typeof rawEvents[0].id === "string" && "label" in rawEvents[0]) {
       // If already in EventItem format, try to apply post-processing if we have metadata
       const eventItems = rawEvents as EventItem[];
-      
-      // Try to extract video duration from first event or use default
-      // In a real scenario, you'd get this from the video metadata
-      const videoDurationSec = 660; // Default 11 minutes, should be passed as prop or extracted
-      
+
+      const videoDurationSec = resolveVideoDurationSec(videoDurationSecProp, eventItems);
+
+
       // Convert EventItem to RawEvent for post-processing
       const rawEventsForProcessing: RawEvent[] = eventItems.map((ev) => {
         // Try to extract confidence and extras from metadata if available
@@ -71,7 +106,11 @@ export function Spotlight({
       });
       
       // Apply post-processing
-      const cleanedEvents = postprocessEvents(rawEventsForProcessing, videoDurationSec);
+      const cleanedEvents = postprocessEvents(rawEventsForProcessing, videoDurationSec, {
+        // Spotlight list should preserve most recognized events; keep only light dedupe.
+        minConfidence: 0.2,
+        topKPerWindow: Number.POSITIVE_INFINITY,
+      });
       
       // Convert CleanEvent back to EventItem
       // Use a Map to track unique IDs and avoid duplicates
@@ -98,6 +137,7 @@ export function Spotlight({
           videoUrl: original?.videoUrl,
           playerId: original?.playerId,
           type: cleaned.kind.toLowerCase(),
+          matchEventId: original?.matchEventId,
         };
       });
     }
@@ -140,11 +180,8 @@ export function Spotlight({
         ? `${typeLabel} - ${playerName} (${teamLabel})`
         : `${typeLabel} (${teamLabel})`;
 
-      // For testing: use demo video if no videoUrl is provided
-      // TODO: Remove this after testing - use a known working MP4 URL
-      const eventVideoUrl = ev.videoUrl || videoUrl || (typeof window !== "undefined" && window.location.hostname === "localhost" 
-        ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" 
-        : undefined);
+      // Use only real event/match video URL. If missing, VideoPlayer will show "No video for this event".
+      const eventVideoUrl = ev.videoUrl || videoUrl || undefined;
 
       return {
         id: ev.id.toString(),
@@ -153,15 +190,15 @@ export function Spotlight({
         videoUrl: eventVideoUrl || undefined,
         playerId: ev.playerId?.toString() || undefined,
         type: ev.type, // Include type for categorization
+        matchEventId: ev.id,
         _metadata: ev.metadata, // Temporary field for post-processing (not in EventItem type)
       };
     });
     
-    // Apply post-processing to converted events
-    // Extract metadata for confidence and extras
-    // TODO: Extract videoDurationSec from video metadata or pass as prop
-    const videoDurationSec = 660; // Default 11 minutes, should be extracted from video or passed as prop
-    
+    // Apply post-processing to converted events.
+    const videoDurationSec = resolveVideoDurationSec(videoDurationSecProp, convertedEvents);
+
+
     const rawEventsForProcessing: RawEvent[] = convertedEvents.map((ev: any) => {
       let confidence = 0.7; // Default confidence
       let extras: RawEvent["extras"] = {};
@@ -176,7 +213,6 @@ export function Spotlight({
               ballSpeedKmh: metadata.ballSpeedKmh,
               goalDistanceM: metadata.goalDistanceM,
               ballInGoal: metadata.ballInGoal || metadata.outcome === "goal",
-              isPressure: metadata.isPressure,
               shotScore: metadata.shotScore,
               passScore: metadata.passScore,
               goalScore: metadata.goalScore,
@@ -196,7 +232,11 @@ export function Spotlight({
     });
     
     // Apply post-processing
-    const cleanedEvents = postprocessEvents(rawEventsForProcessing, videoDurationSec);
+    const cleanedEvents = postprocessEvents(rawEventsForProcessing, videoDurationSec, {
+      // Spotlight list should preserve most recognized events; keep only light dedupe.
+      minConfidence: 0.2,
+      topKPerWindow: Number.POSITIVE_INFINITY,
+    });
     
     // Convert CleanEvent back to EventItem, preserving original data
     // Use a Map to track unique IDs and avoid duplicates
@@ -233,36 +273,99 @@ export function Spotlight({
         videoUrl: original.videoUrl,
         playerId: original.playerId,
         type: cleaned.kind.toLowerCase(),
+        matchEventId: original.matchEventId,
       };
-    }).filter((e): e is EventItem => e !== null);
-  }, [rawEvents, videoUrl]);
+    }).filter((e) => e !== null) as EventItem[];
+  }, [rawEvents, videoUrl, videoDurationSecProp]);
 
   const [selected, setSelected] = useState<EventItem | null>(events[0] ?? null);
-  const [lineup, setLineup] = useState<LineupEntry[]>([]);
+  const [forcedStartSec, setForcedStartSec] = useState<number | null>(null);
+  const [lineup, setLineup] = useState<SpotlightLineupEntry[]>([]);
+  const [playlists, setPlaylists] = useState<PlaylistOption[]>([]);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<number | null>(null);
+  const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set());
+  const [savingClips, setSavingClips] = useState(false);
+
+  // Keep selected event valid when event list changes.
+  useEffect(() => {
+    if (events.length === 0) {
+      setSelected(null);
+      setSelectedClipIds(new Set());
+      return;
+    }
+    if (!selected || !events.some((e) => e.id === selected.id)) {
+      setSelected(events[0]);
+    }
+    setSelectedClipIds((prev) => {
+      const validIds = new Set(events.map((e) => e.id));
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (validIds.has(id)) next.add(id);
+      });
+      return next;
+    });
+  }, [events, selected]);
+
+  useEffect(() => {
+    async function loadPlaylists() {
+      try {
+        const res = await fetch("/api/playlists");
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        if (data?.ok && Array.isArray(data.playlists)) {
+          const options: PlaylistOption[] = data.playlists.map((p: any) => ({ id: p.id, name: p.name }));
+          setPlaylists(options);
+          setSelectedPlaylistId((prev) => prev ?? (options[0]?.id ?? null));
+        }
+      } catch {
+        // ignore
+      }
+    }
+    void loadPlaylists();
+  }, []);
 
   // Load lineup data
   useEffect(() => {
-    const loadLineups = async () => {
-      const entries: LineupEntry[] = [];
+    if (initialMinute === undefined || initialMinute === null || events.length === 0) return;
+    setForcedStartSec(Math.max(0, initialMinute * 60));
+    // Prefer an event with available video near the target minute.
+    const targetSec = Math.max(0, initialMinute * 60);
+    const nearestWithVideo =
+      [...events]
+        .filter((e) => !!(e.videoUrl || videoUrl))
+        .sort((a, b) => Math.abs(a.timeSec - targetSec) - Math.abs(b.timeSec - targetSec))[0] ||
+      null;
+    if (nearestWithVideo) {
+      setSelected(nearestWithVideo);
+    }
+  }, [initialMinute, events, videoUrl]);
 
-      const loadTeamLineup = async (teamId: number | null | undefined) => {
+  useEffect(() => {
+    const loadLineups = async () => {
+      const entries: SpotlightLineupEntry[] = [];
+
+      const loadTeamLineup = async (teamId: number | null | undefined, team: TeamSide) => {
         if (!teamId) return;
 
         try {
           const res = await fetch(`/api/matches/${matchId}/lineup?teamId=${teamId}`);
-          const data = await res.json();
-
-          if (data.ok && data.lineup && data.formation) {
-            const { formations } = await import("../lib/formations");
-            const formationTemplate = formations[data.formation] || [];
-            
-            data.lineup.forEach((pos: {
+          const data = await parseApiResponseJson<{
+            ok?: boolean;
+            lineup?: Array<{
               playerId: number | null;
               x: number;
               y: number;
               player?: { id: number; name: string; number?: number | null };
               slot?: string;
-            }, index: number) => {
+            }>;
+            formation?: string;
+          }>(res);
+
+          if (data.ok && data.lineup && data.formation) {
+            const { formations } = await import("../lib/formations");
+            const formationTemplate = formations[data.formation] || [];
+            
+            data.lineup.forEach((pos, index: number) => {
               if (!pos.playerId || !pos.player) return;
 
               // Try to get slot from position or use formation template
@@ -273,6 +376,7 @@ export function Spotlight({
                 name: pos.player.name,
                 number: pos.player.number || undefined,
                 slot,
+                team,
               });
             });
           }
@@ -281,22 +385,127 @@ export function Spotlight({
         }
       };
 
-      await Promise.all([loadTeamLineup(homeTeamId), loadTeamLineup(awayTeamId)]);
+      await Promise.all([loadTeamLineup(homeTeamId, "home"), loadTeamLineup(awayTeamId, "away")]);
       setLineup(entries);
     };
 
     loadLineups();
   }, [matchId, homeTeamId, awayTeamId]);
 
-  const lineupMap = useMemo(() => buildLineupMap(formation, lineup), [formation, lineup]);
+  const selectedTeam = useMemo<TeamSide | null>(() => {
+    if (!selected?.label) return null;
+    if (selected.label.includes("(Home)")) return "home";
+    if (selected.label.includes("(Away)")) return "away";
+    return null;
+  }, [selected?.label]);
+
+  const lineupForPitch = useMemo(() => {
+    const teamFiltered = selectedTeam ? lineup.filter((p) => p.team === selectedTeam) : lineup;
+    return teamFiltered.map(({ team: _team, ...entry }) => entry);
+  }, [lineup, selectedTeam]);
+
+  const lineupMap = useMemo(() => buildLineupMap(formation, lineupForPitch), [formation, lineupForPitch]);
+  const lineupCount = lineupForPitch.length;
+  const hasCompleteLineup = lineupCount >= 7;
+
+  const playbackSrc = selected?.videoUrl || videoUrl || undefined;
+
+  const selectedClips = useMemo(
+    () => events.filter((ev) => selectedClipIds.has(ev.id)),
+    [events, selectedClipIds]
+  );
+
+  function toggleClipSelection(ev: EventItem) {
+    setSelectedClipIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(ev.id)) next.delete(ev.id);
+      else next.add(ev.id);
+      return next;
+    });
+  }
+
+  function clipRangeForEvent(ev: EventItem): { startSec: number; endSec: number } {
+    const t = Math.max(0, Math.floor(ev.timeSec));
+    const type = (ev.type || "").toLowerCase();
+    const lead = type === "goal" || type === "shot" ? 6 : 4;
+    const tail = type === "goal" || type === "shot" ? 10 : 8;
+    return { startSec: Math.max(0, t - lead), endSec: Math.max(1, t + tail) };
+  }
+
+  async function saveSelectedToPlaylist() {
+    if (!selectedPlaylistId) {
+      toast.error("Select a playlist first.");
+      return;
+    }
+    if (selectedClips.length === 0) {
+      toast.error("Select at least one clip from Spotlight events.");
+      return;
+    }
+    setSavingClips(true);
+    try {
+      let successCount = 0;
+      for (const ev of selectedClips) {
+        const { startSec, endSec } = clipRangeForEvent(ev);
+        const res = await fetch(`/api/playlists/${selectedPlaylistId}/clips`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            matchId,
+            title: ev.label,
+            startSec,
+            endSec,
+            matchEventId: ev.matchEventId,
+          }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.ok) {
+          successCount += 1;
+        }
+      }
+      if (successCount > 0) {
+        toast.success(`Saved ${successCount} clip${successCount === 1 ? "" : "s"} to playlist.`);
+        setSelectedClipIds(new Set());
+      } else {
+        toast.error("No clips were saved.");
+      }
+    } catch {
+      toast.error("Failed to save clips.");
+    } finally {
+      setSavingClips(false);
+    }
+  }
 
   return (
     <div className="w-full space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-2xl font-bold text-white">Spotlight</h2>
-        <div className="text-sm text-slate-400">
-          {events.length} {events.length === 1 ? "event" : "events"}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="text-sm text-slate-400">
+            {events.length} {events.length === 1 ? "event" : "events"}
+          </div>
+          <select
+            value={selectedPlaylistId ?? ""}
+            onChange={(e) => setSelectedPlaylistId(e.target.value ? Number(e.target.value) : null)}
+            className="h-8 rounded-md border border-slate-700 bg-slate-900 px-2 text-xs text-slate-200 outline-none focus:border-emerald-500"
+          >
+            <option value="">Select playlist</option>
+            {playlists.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={saveSelectedToPlaylist}
+            disabled={savingClips || selectedClips.length === 0}
+            className="h-8 rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {savingClips
+              ? "Saving..."
+              : `Save selected (${selectedClips.length})`}
+          </button>
         </div>
       </div>
 
@@ -306,14 +515,24 @@ export function Spotlight({
         <div className="lg:col-span-2 space-y-4">
           {/* Video Player */}
           <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-700/50 shadow-lg">
-            <VideoPlayer src={selected?.videoUrl} startTime={selected?.timeSec ?? 0} autoPlay={false} />
+            <VideoPlayer
+              src={playbackSrc}
+              startTime={forcedStartSec ?? selected?.timeSec ?? 0}
+              autoPlay={false}
+            />
           </div>
 
           {/* Pitch Overlay */}
           {Object.keys(lineupMap).length > 0 && (
             <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-700/50 shadow-lg">
               <h3 className="text-sm font-semibold text-slate-300 mb-3">Formation</h3>
-              <Pitch lineupMap={lineupMap} selectedPlayerId={selected?.playerId} />
+              {hasCompleteLineup ? (
+                <Pitch lineupMap={lineupMap} selectedPlayerId={selected?.playerId} />
+              ) : (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+                  Incomplete lineup data ({lineupCount} players). Add full lineup to render proper formation.
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -323,7 +542,16 @@ export function Spotlight({
           <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-700/50 shadow-lg h-full flex flex-col">
             <h3 className="text-sm font-semibold text-slate-300 mb-4">Events</h3>
             <div className="flex-1 min-h-0">
-              <EventList events={events} selectedId={selected?.id} onSelect={setSelected} />
+              <EventList
+                events={events}
+                selectedId={selected?.id}
+                selectedClipIds={selectedClipIds}
+                onToggleClipSelection={toggleClipSelection}
+                onSelect={(ev) => {
+                  setForcedStartSec(null);
+                  setSelected(ev);
+                }}
+              />
             </div>
           </div>
         </div>

@@ -64,7 +64,7 @@ function buildVectors(
 ): MovementVector[] {
   // Filter events by team and type
   let filteredEvents = events.filter(
-    (e) => e.team === team && e.playerId !== null && e.x !== null && e.y !== null && e.minute !== null
+    (e) => e.team === team && e.x !== null && e.y !== null && e.minute !== null
   );
 
   // Filter by half
@@ -88,7 +88,11 @@ function buildVectors(
   // Filter by players
   if (filters.playerIds && filters.playerIds.length > 0) {
     const allowedIds = new Set(filters.playerIds);
-    filteredEvents = filteredEvents.filter((e) => e.playerId && allowedIds.has(e.playerId.toString()));
+    const allSelected = allowedIds.has("__all__");
+    if (!allSelected) {
+      // Keep unknown-player events too (AI often cannot assign a playerId).
+      filteredEvents = filteredEvents.filter((e) => !e.playerId || allowedIds.has(e.playerId.toString()));
+    }
   }
 
   // Build vectors from consecutive events or from metadata
@@ -96,8 +100,8 @@ function buildVectors(
   const eventsByPlayer = new Map<PlayerId, typeof filteredEvents>();
 
   filteredEvents.forEach((e) => {
-    if (!e.playerId) return;
-    const playerId = e.playerId.toString();
+    // Keep unknown player events too; AI output often has no playerId.
+    const playerId = e.playerId ? e.playerId.toString() : `unknown-${team}`;
     if (!eventsByPlayer.has(playerId)) {
       eventsByPlayer.set(playerId, []);
     }
@@ -108,15 +112,79 @@ function buildVectors(
     // Sort by minute
     const sorted = [...playerEvents].sort((a, b) => (a.minute || 0) - (b.minute || 0));
 
+    // 1) Prefer explicit pass/carry vectors from metadata end coordinates.
+    // This is the most accurate source and should not depend on consecutive events.
+    sorted.forEach((event) => {
+      if (event.x === null || event.y === null) return;
+      if (event.type !== "pass" && event.type !== "carry" && event.type !== "dribble") return;
+
+      let endX: number | null = null;
+      let endY: number | null = null;
+      let subType: string | undefined;
+
+      if (event.metadata) {
+        try {
+          const meta = JSON.parse(event.metadata);
+          // Support both legacy and new key names
+          endX = meta.endX ?? meta.toX ?? null;
+          endY = meta.endY ?? meta.toY ?? null;
+          subType = meta.subType || meta.progressive || undefined;
+        } catch {
+          // invalid metadata
+        }
+      }
+
+      if (endX === null || endY === null || Number.isNaN(Number(endX)) || Number.isNaN(Number(endY))) return;
+      if (Number(endX) < 0 || Number(endX) > 100 || Number(endY) < 0 || Number(endY) > 100) return;
+
+      const startX = Number(event.x) / 100;
+      const startY = Number(event.y) / 100;
+      const finalEndXRaw = Number(endX) / 100;
+      const endYNorm = Number(endY) / 100;
+
+      const dx = (finalEndXRaw - startX) * 105;
+      const dy = (endYNorm - startY) * 68;
+      const distanceM = Math.sqrt(dx * dx + dy * dy);
+      if (filters.minDistance && distanceM < filters.minDistance) return;
+
+      const speedMps = distanceM / 2;
+      let finalStartX = startX;
+      let finalEndX = finalEndXRaw;
+      if (filters.normalizeDirection && team === "away") {
+        finalStartX = 1 - startX;
+        finalEndX = 1 - finalEndXRaw;
+      }
+
+      if (filters.subAttribute && filters.subAttribute !== "all") {
+        if (filters.subAttribute === "progressive" && subType !== "progressive") return;
+        if (filters.subAttribute === "backward" && subType !== "backward") return;
+      }
+
+      vectors.push({
+        teamId: team,
+        playerId: event.playerId ? event.playerId.toString() : `unknown-${event.id}`,
+        startX: finalStartX,
+        startY,
+        endX: finalEndX,
+        endY: endYNorm,
+        half: (event.minute || 0) < 45 ? "1H" : "2H",
+        speedMps,
+        distanceM,
+        eventType: event.type,
+        subType,
+      });
+    });
+
+    // 2) Fallback to consecutive-event vectors when metadata endpoints are unavailable.
     for (let i = 0; i < sorted.length - 1; i++) {
       const current = sorted[i];
       const next = sorted[i + 1];
 
-      if (!current.x || !current.y || !next.x || !next.y) continue;
+      if (current.x === null || current.y === null || next.x === null || next.y === null) continue;
 
       // Only create vector if events are close in time (same minute or adjacent)
       const timeDiff = (next.minute || 0) - (current.minute || 0);
-      if (timeDiff > 1) continue; // Skip if more than 1 minute apart
+      if (timeDiff > 5) continue; // Allow small gaps to avoid empty plots on sparse data
 
       const startX = current.x / 100; // Normalize to 0-1
       const startY = current.y / 100;
@@ -286,24 +354,9 @@ function VectorPitch({ vectors, teamColor, teamName, width = 900, height = 520 }
           const distanceNorm = distance / maxDistance;
           const speedNorm = speed / maxSpeed;
 
-          // Arrow length (clamped)
-          const baseLength = 20;
-          const maxLength = 80;
-          const pxLength = Math.min(maxLength, baseLength + 60 * distanceNorm);
-
-          // Calculate actual line length
-          const dx = x2 - x1;
-          const dy = y2 - y1;
-          const actualLength = Math.sqrt(dx * dx + dy * dy);
-
-          // Scale if needed
-          let finalX2 = x2;
-          let finalY2 = y2;
-          if (actualLength > pxLength) {
-            const scale = pxLength / actualLength;
-            finalX2 = x1 + dx * scale;
-            finalY2 = y1 + dy * scale;
-          }
+          // Draw true vector length (no hard clamp) to match tactical-style vector maps.
+          const finalX2 = x2;
+          const finalY2 = y2;
 
           const opacity = 0.35 + 0.5 * speedNorm;
           const isHovered = hoveredVector === vector;
@@ -432,16 +485,16 @@ export function VectorField({
   homeTeamName,
   awayTeamName,
 }: VectorFieldProps) {
-  const [homeAttribute, setHomeAttribute] = useState<"passing" | "carrying" | "all">("passing");
-  const [awayAttribute, setAwayAttribute] = useState<"passing" | "carrying" | "all">("passing");
+  const [homeAttribute, setHomeAttribute] = useState<"passing" | "carrying" | "all">("all");
+  const [awayAttribute, setAwayAttribute] = useState<"passing" | "carrying" | "all">("all");
   const [homeSubAttribute, setHomeSubAttribute] = useState("all");
   const [awaySubAttribute, setAwaySubAttribute] = useState("all");
   const [homeEventType, setHomeEventType] = useState("all");
   const [awayEventType, setAwayEventType] = useState("all");
-  const [homePlayerIds, setHomePlayerIds] = useState<PlayerId[]>([]);
-  const [awayPlayerIds, setAwayPlayerIds] = useState<PlayerId[]>([]);
+  const [homePlayerIds, setHomePlayerIds] = useState<PlayerId[]>(["__all__"]);
+  const [awayPlayerIds, setAwayPlayerIds] = useState<PlayerId[]>(["__all__"]);
   const [half, setHalf] = useState<Half>("all");
-  const [minDistance, setMinDistance] = useState(5);
+  const [minDistance, setMinDistance] = useState(0);
   const [normalizeDirection, setNormalizeDirection] = useState(false);
   const [showSpotlight, setShowSpotlight] = useState(false);
 
@@ -584,7 +637,7 @@ export function VectorField({
                 className="w-full px-3 py-2 rounded-xl bg-[#0a1520] border border-white/5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all duration-200 hover:border-white/10"
                 size={3}
               >
-                <option value="">👥 All Players ({homePlayers.length})</option>
+                <option value="__all__">👥 All Players ({homePlayers.length})</option>
                 {homePlayers.map((p) => (
                   <option key={p.id} value={p.id.toString()}>
                     #{p.number || "?"} {p.name}
@@ -679,7 +732,7 @@ export function VectorField({
                 className="w-full px-3 py-2 rounded-xl bg-[#0a1520] border border-white/5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all duration-200 hover:border-white/10"
                 size={3}
               >
-                <option value="">👥 All Players ({awayPlayers.length})</option>
+                <option value="__all__">👥 All Players ({awayPlayers.length})</option>
                 {awayPlayers.map((p) => (
                   <option key={p.id} value={p.id.toString()}>
                     #{p.number || "?"} {p.name}

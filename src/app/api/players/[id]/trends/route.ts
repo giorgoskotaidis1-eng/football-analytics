@@ -45,14 +45,45 @@ export async function GET(
       return NextResponse.json({ ok: false, message: "Player not found" }, { status: 404 });
     }
 
+    // Get user's team IDs to verify access
+    const userTeams = await prisma.userTeam.findMany({
+      where: { userId: user.id, status: "active" },
+      select: { teamId: true },
+    });
+    
+    const createdTeams = await prisma.team.findMany({
+      where: { createdById: user.id },
+      select: { id: true },
+    });
+    
+    const userTeamIds = [
+      ...userTeams.map((ut) => ut.teamId),
+      ...createdTeams.map((t) => t.id),
+    ];
+
+    // Get player with team to verify access
+    const playerWithTeam = await prisma.player.findUnique({
+      where: { id: player.id },
+      select: { teamId: true },
+    });
+
+    if (playerWithTeam?.teamId && !userTeamIds.includes(playerWithTeam.teamId)) {
+      return NextResponse.json({ ok: false, message: "You don't have access to this player" }, { status: 403 });
+    }
+
     // Get all matches where this player has events, ordered by date
     const matches = await prisma.match.findMany({
       where: {
         events: {
           some: {
-            playerId: playerId,
+            playerId: player.id,
           },
         },
+        // Also filter by user's teams
+        OR: userTeamIds.length > 0 ? [
+          { homeTeamId: { in: userTeamIds } },
+          { awayTeamId: { in: userTeamIds } },
+        ] : undefined,
       },
       include: {
         homeTeam: {
@@ -63,7 +94,7 @@ export async function GET(
         },
         events: {
           where: {
-            playerId: playerId,
+            playerId: player.id,
           },
           select: {
             id: true,

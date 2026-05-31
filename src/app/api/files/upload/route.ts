@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 
 export const runtime = "nodejs";
+
+const ALLOWED_CATEGORIES = new Set(["report", "schedule", "data", "other"]);
+
+function normalizeCategory(raw: string | null | undefined): string {
+  if (!raw) return "other";
+  const v = raw.trim().toLowerCase();
+  return ALLOWED_CATEGORIES.has(v) ? v : "other";
+}
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const ALLOWED_TYPES = [
@@ -47,34 +56,57 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create uploads directory if it doesn't exist
-    const uploadsDir = join(process.cwd(), "public", "uploads", "files");
-    if (!existsSync(uploadsDir)) {
-      await mkdir(uploadsDir, { recursive: true });
+    // Create per-user uploads directory if it doesn't exist
+    const userDir = join(process.cwd(), "public", "uploads", "files", String(user.id));
+    if (!existsSync(userDir)) {
+      await mkdir(userDir, { recursive: true });
     }
 
     // Generate unique filename
     const timestamp = Date.now();
     const extension = file.name.split(".").pop() || "file";
-    const finalFileName = fileName || file.name.replace(/\.[^/.]+$/, "");
-    const filename = `${finalFileName}-${timestamp}.${extension}`;
-    const filepath = join(uploadsDir, filename);
+    const baseName = (fileName || file.name.replace(/\.[^/.]+$/, "")).replace(/[^a-zA-Z0-9_-]+/g, "-");
+    const filename = `${baseName}-${timestamp}.${extension}`;
+    const filepath = join(userDir, filename);
 
     // Save file
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
     await writeFile(filepath, buffer);
 
-    // Generate public URL
-    const publicUrl = `/uploads/files/${filename}`;
+    // Persist metadata to DB
+    const storageKey = `files/${user.id}/${filename}`;
+    const publicUrl = `/uploads/${storageKey}`;
+    const category = normalizeCategory(fileType);
 
-    // TODO: Save file metadata to database
-    // For now, we'll just return the URL
+    const record = await prisma.uploadedFile.create({
+      data: {
+        userId: user.id,
+        name: baseName || file.name,
+        originalName: file.name,
+        storageKey,
+        mimeType: file.type,
+        size: file.size,
+        category,
+      },
+    });
 
     return NextResponse.json({
       ok: true,
       url: publicUrl,
-      filename: filename,
+      filename,
+      file: {
+        id: record.id,
+        name: record.name,
+        originalName: record.originalName,
+        mimeType: record.mimeType,
+        size: record.size,
+        category: record.category,
+        storageKey: record.storageKey,
+        url: publicUrl,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      },
       message: "File uploaded successfully",
     });
   } catch (error) {

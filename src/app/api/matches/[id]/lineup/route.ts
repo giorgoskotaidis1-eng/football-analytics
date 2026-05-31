@@ -18,6 +18,41 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ ok: false, message: "Invalid match ID or team ID" }, { status: 400 });
   }
 
+  // Get user's team IDs to verify access
+  const userTeams = await prisma.userTeam.findMany({
+    where: { userId: user.id, status: "active" },
+    select: { teamId: true },
+  });
+  
+  const createdTeams = await prisma.team.findMany({
+    where: { createdById: user.id },
+    select: { id: true },
+  });
+  
+  const userTeamIds = [
+    ...userTeams.map((ut) => ut.teamId),
+    ...createdTeams.map((t) => t.id),
+  ];
+
+  // Verify user has access to this team
+  if (!userTeamIds.includes(teamId)) {
+    return NextResponse.json({ ok: false, message: "You don't have access to this team" }, { status: 403 });
+  }
+
+  // Verify match belongs to user's teams
+  const match = await prisma.match.findUnique({
+    where: { id: matchId },
+    select: { homeTeamId: true, awayTeamId: true },
+  });
+
+  if (match) {
+    const hasAccess = (match.homeTeamId && userTeamIds.includes(match.homeTeamId)) ||
+                     (match.awayTeamId && userTeamIds.includes(match.awayTeamId));
+    if (!hasAccess && userTeamIds.length > 0) {
+      return NextResponse.json({ ok: false, message: "You don't have access to this match" }, { status: 403 });
+    }
+  }
+
   try {
     const lineup = await prisma.matchLineup.findUnique({
       where: {

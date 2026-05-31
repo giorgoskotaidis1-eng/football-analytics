@@ -51,6 +51,7 @@ For detailed deployment instructions, see [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUI
 - [Deployment Guide](./DEPLOYMENT_GUIDE.md) - How to deploy to Vercel
 - [Mac Setup](./MAC_QUICK_START.md) - Setup instructions for Mac
 - [Email Setup](./EMAIL_SETUP.md) - Email configuration
+- [Billing Setup](./BILLING_SETUP.md) - Stripe Checkout / Billing Portal / webhook
 
 ## 🛠️ Tech Stack
 
@@ -60,6 +61,20 @@ For detailed deployment instructions, see [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUI
 - **Authentication:** JWT
 - **Video Processing:** FFmpeg
 - **AI/ML:** Custom YOLO models for event detection
+
+## 🐘 PostgreSQL Setup
+
+Για production ή μεγάλο όγκο δεδομένων, χρησιμοποίησε PostgreSQL:
+
+- **📖 Οδηγίες:** [POSTGRESQL_SETUP.md](./POSTGRESQL_SETUP.md)
+- **🚀 Quick Switch:** 
+  - Windows: `switch-to-postgres.bat`
+  - Mac/Linux: `./switch-to-postgres.sh`
+
+**Cloud Options:**
+- Vercel Postgres (προτεινόμενο)
+- Supabase (δωρεάν)
+- Neon (δωρεάν)
 
 ## 📝 License
 

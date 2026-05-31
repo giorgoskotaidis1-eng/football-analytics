@@ -43,7 +43,12 @@ export default function PlayersPage() {
   const [menuPosition, setMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const buttonRefs = useRef<{ [key: number]: HTMLButtonElement | null }>({});
   const [selectedPlayers, setSelectedPlayers] = useState<number[]>([]);
+  /** Έγινε restore από localStorage· τρέχει ένα validate προς το compare API. */
+  const compareHydrationPendingRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [filterTeamId, setFilterTeamId] = useState<string>("");
+  const [filterPosition, setFilterPosition] = useState<string>("");
   const [showExportModal, setShowExportModal] = useState(false);
   const [watchlistIds, setWatchlistIds] = useState<number[]>([]);
   
@@ -51,35 +56,54 @@ export default function PlayersPage() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [totalPlayers, setTotalPlayers] = useState(0);
-  
-  // Use useMemo for filtered players instead of useEffect + state
-  const filteredPlayers = useMemo(() => {
-    console.log("[useMemo] Filtering players:", { 
-      searchQuery, 
-      playersCount: players.length,
-      playerNames: players.map(p => p.name)
-    });
-    
-    if (!searchQuery.trim()) {
-      console.log("[useMemo] No search query, returning all", players.length, "players");
-      return players;
-    }
 
-    const query = searchQuery.toLowerCase().trim();
-    const filtered = players.filter((player) => {
-      const nameMatch = player.name?.toLowerCase().includes(query);
-      const idMatch = player.id?.toString().includes(query);
-      const positionMatch = player.position?.toLowerCase().includes(query);
-      const teamMatch = player.team?.name?.toLowerCase().includes(query);
-      const clubMatch = player.club?.toLowerCase().includes(query);
-      
-      return nameMatch || idMatch || positionMatch || teamMatch || clubMatch;
+  // Debounce server search so we don't hit the API on every keystroke and
+  // avoid the full table flash that looks like a page refresh.
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [searchQuery]);
+
+  // Combined client-side filtering: search + team + position.
+  const filteredPlayers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const teamIdNum = filterTeamId ? Number(filterTeamId) : null;
+
+    return players.filter((player) => {
+      if (teamIdNum && player.team?.id !== teamIdNum) return false;
+      if (filterPosition && player.position !== filterPosition) return false;
+
+      if (query) {
+        const nameMatch = player.name?.toLowerCase().includes(query);
+        const idMatch = player.id?.toString().includes(query);
+        const positionMatch = player.position?.toLowerCase().includes(query);
+        const teamMatch = player.team?.name?.toLowerCase().includes(query);
+        const clubMatch = player.club?.toLowerCase().includes(query);
+        if (!(nameMatch || idMatch || positionMatch || teamMatch || clubMatch)) {
+          return false;
+        }
+      }
+
+      return true;
     });
-    
-    console.log("[useMemo] Filtered players:", filtered.length, "matching:", filtered.map(p => p.name));
-    return filtered;
-  }, [searchQuery, players]);
-  
+  }, [searchQuery, players, filterTeamId, filterPosition]);
+
+  const hasActiveFilters = useMemo(
+    () => Boolean(filterTeamId || filterPosition),
+    [filterTeamId, filterPosition]
+  );
+
+  // Distinct positions present in the currently loaded players list.
+  const availablePositions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of players) {
+      if (p.position) set.add(p.position);
+    }
+    return Array.from(set).sort();
+  }, [players]);
+
   const {
     register,
     handleSubmit,
@@ -104,24 +128,22 @@ export default function PlayersPage() {
   const fetchPlayers = async (pageNum: number = 1, append: boolean = false) => {
     try {
       if (!append) {
-        setLoading(true);
+        // Only show full-screen skeleton on first load, not on every search refetch.
+        if (players.length === 0) {
+          setLoading(true);
+        }
       } else {
         setLoadingMore(true);
       }
-      
-      const searchParam = searchQuery.trim() ? `&search=${encodeURIComponent(searchQuery.trim())}` : "";
+
+      const effectiveSearch = debouncedSearch.trim();
+      const searchParam = effectiveSearch ? `&search=${encodeURIComponent(effectiveSearch)}` : "";
       const playersUrl = `/api/players?page=${pageNum}&limit=50&t=${Date.now()}${searchParam}`;
       
       const playersRes = await fetch(playersUrl);
-      console.log("[fetchPlayers] Response status:", playersRes.status, "page:", pageNum);
 
       if (playersRes.ok) {
         const playersData = await playersRes.json();
-        console.log("[fetchPlayers] Received data:", {
-          ok: playersData.ok,
-          playersCount: playersData.players?.length,
-          pagination: playersData.pagination,
-        });
 
         if (playersData.ok && Array.isArray(playersData.players)) {
           const playersWithIds = playersData.players.map((p: any, index: number) => ({
@@ -136,55 +158,37 @@ export default function PlayersPage() {
           }));
 
           if (append) {
-            // Append new players (infinite scroll) - MERGE with existing
             setPlayers((prev) => {
               const existingMap = new Map(prev.map((p) => [p.id, p]));
-              // Add/update with new players from server
               playersWithIds.forEach((p: any) => {
                 existingMap.set(p.id, p);
               });
-              const merged = Array.from(existingMap.values()).sort((a, b) => b.id - a.id);
-              console.log("[fetchPlayers] Appended players. Previous:", prev.length, "New from server:", playersWithIds.length, "Total:", merged.length);
-              return merged;
+              return Array.from(existingMap.values()).sort((a, b) => b.id - a.id);
             });
+          } else if (effectiveSearch) {
+            // Fresh search results: replace the list so stale entries from a
+            // previous query don't linger. Client-side useMemo still applies
+            // the additional team/position filters.
+            setPlayers(playersWithIds.sort((a: Player, b: Player) => b.id - a.id));
           } else {
-            // ALWAYS merge - NEVER replace completely (like Instat/Wyscout)
+            // Initial / unfiltered refetch: merge so we never drop locally
+            // optimistic players (added via inline create).
             setPlayers((prev) => {
-              // Create map of existing players (preserve all current players)
               const existingMap = new Map(prev.map((p) => [p.id, p]));
-              
-              // Add/update with new players from server
               playersWithIds.forEach((p: any) => {
                 existingMap.set(p.id, p);
               });
-              
-              // Convert to array and sort by ID descending (newest first)
               const merged = Array.from(existingMap.values()).sort((a, b) => b.id - a.id);
-              
-              // Safety check: ensure we didn't lose any players
+
               if (prev.length > 0 && merged.length < prev.length) {
-                console.warn("[fetchPlayers] ⚠️ WARNING: Lost players during merge!", {
-                  before: prev.length,
-                  after: merged.length,
-                  prevIds: prev.map(p => p.id),
-                  mergedIds: merged.map(p => p.id),
-                  missing: prev.filter(p => !merged.some(m => m.id === p.id)).map(p => `${p.id}: ${p.name}`)
-                });
-                
-                // Re-add any missing players
-                prev.forEach(prevPlayer => {
-                  if (!merged.some(m => m.id === prevPlayer.id)) {
-                    console.log("[fetchPlayers] Re-adding missing player:", prevPlayer.id, prevPlayer.name);
+                prev.forEach((prevPlayer) => {
+                  if (!merged.some((m) => m.id === prevPlayer.id)) {
                     merged.push(prevPlayer);
                   }
                 });
-                
-                // Re-sort after re-adding
                 merged.sort((a, b) => b.id - a.id);
               }
-              
-              console.log("[fetchPlayers] ✅ Merged players. Previous:", prev.length, "From server:", playersWithIds.length, "Total:", merged.length);
-              console.log("[fetchPlayers] Player IDs:", merged.map((p: any) => `${p.id}: ${p.name}`));
+
               return merged;
             });
           }
@@ -237,23 +241,16 @@ export default function PlayersPage() {
     checkAuth();
   }, [router]);
   
-  // Initial load and when search changes
+  // Initial load and when (debounced) search changes.
+  // We deliberately keep the existing list while re-fetching so the table
+  // does not flash empty (which looked like a full page refresh).
   useEffect(() => {
     if (isInitialMount) {
-      // First load - just fetch
-      console.log("[useEffect] Initial mount - loading players");
       setIsInitialMount(false);
-      setPage(1);
-      setPlayers([]);
-      fetchPlayers(1, false);
-    } else {
-      // Search changed - reset and fetch
-      console.log("[useEffect] Search query changed:", searchQuery);
-      setPage(1);
-      setPlayers([]);
-      fetchPlayers(1, false);
     }
-  }, [searchQuery]); // Re-fetch when search changes
+    setPage(1);
+    fetchPlayers(1, false);
+  }, [debouncedSearch]); // Re-fetch only after debounce
 
   // Load teams once
   useEffect(() => {
@@ -292,7 +289,7 @@ export default function PlayersPage() {
         if (Array.isArray(parsedIds) && parsedIds.length >= 1 && parsedIds.length <= 4) {
           const validIds = parsedIds.map(id => parseInt(String(id))).filter(id => !isNaN(id) && id > 0);
           if (validIds.length > 0) {
-            console.log("[PlayersPage] Restored selected players from localStorage:", validIds);
+            compareHydrationPendingRef.current = true;
             setSelectedPlayers(validIds);
           }
         }
@@ -301,6 +298,47 @@ export default function PlayersPage() {
       console.warn("[PlayersPage] Failed to load selected players from localStorage:", e);
     }
   }, []);
+
+  // Μετά το localStorage: κράτα μόνο παίκτες που επιστρέφει το compare API (δικές σου ομάδες).
+  useEffect(() => {
+    if (!compareHydrationPendingRef.current) return;
+    if (selectedPlayers.length < 1) return;
+
+    compareHydrationPendingRef.current = false;
+    let cancelled = false;
+    const snapshot = [...selectedPlayers];
+
+    (async () => {
+      try {
+        const res = await fetch("/api/players/compare", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playerIds: snapshot }),
+          credentials: "include",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (cancelled || !res.ok || !Array.isArray(data.players)) return;
+
+        const allowed = new Set(data.players.map((p: { id: number }) => Number(p.id)));
+        const next = snapshot.filter((id) => allowed.has(Number(id)));
+        if (next.length === snapshot.length) return;
+
+        if (next.length >= 1) {
+          localStorage.setItem("playerComparisonIds", JSON.stringify(next));
+          setSelectedPlayers(next);
+        } else {
+          localStorage.removeItem("playerComparisonIds");
+          setSelectedPlayers([]);
+        }
+      } catch {
+        compareHydrationPendingRef.current = false;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPlayers]);
 
   // Infinite scroll handler (like Instat/Wyscout)
   useEffect(() => {
@@ -313,7 +351,6 @@ export default function PlayersPage() {
 
       // Load more when user is 200px from bottom
       if (scrollTop + windowHeight >= documentHeight - 200) {
-        console.log("[InfiniteScroll] Loading more players, page:", page + 1);
         fetchPlayers(page + 1, true);
       }
     };
@@ -390,11 +427,7 @@ export default function PlayersPage() {
           setPlayers((prev) => {
             const existingMap = new Map(prev.map((p) => [p.id, p]));
             existingMap.set(newPlayer.id, newPlayer);
-            const merged = Array.from(existingMap.values()).sort((a, b) => b.id - a.id);
-            console.log("[handleAddPlayer] ✅ Added player IMMEDIATELY. Previous:", prev.length, "Total:", merged.length);
-            console.log("[handleAddPlayer] Player IDs:", merged.map(p => `${p.id}: ${p.name}`));
-            console.log("[handleAddPlayer] New player in list?", merged.some(p => p.id === newPlayer.id));
-            return merged;
+            return Array.from(existingMap.values()).sort((a, b) => b.id - a.id);
           });
           
           // Update total count
@@ -444,10 +477,8 @@ export default function PlayersPage() {
     try {
       if (newSelected.length > 0) {
         localStorage.setItem("playerComparisonIds", JSON.stringify(newSelected));
-        console.log("[PlayersPage] Saved selected players to localStorage:", newSelected);
       } else {
         localStorage.removeItem("playerComparisonIds");
-        console.log("[PlayersPage] Cleared selected players from localStorage");
       }
     } catch (e) {
       console.warn("[PlayersPage] Failed to save to localStorage:", e);
@@ -461,17 +492,14 @@ export default function PlayersPage() {
     } else {
       newSelected = filteredPlayers.slice(0, 4).map((p) => p.id);
     }
-    
+
     setSelectedPlayers(newSelected);
-    
-    // Save to localStorage for persistence
+
     try {
       if (newSelected.length > 0) {
         localStorage.setItem("playerComparisonIds", JSON.stringify(newSelected));
-        console.log("[PlayersPage] Saved selected players to localStorage:", newSelected);
       } else {
         localStorage.removeItem("playerComparisonIds");
-        console.log("[PlayersPage] Cleared selected players from localStorage");
       }
     } catch (e) {
       console.warn("[PlayersPage] Failed to save to localStorage:", e);
@@ -487,14 +515,11 @@ export default function PlayersPage() {
     // Save to localStorage before navigating (for persistence across reloads)
     try {
       localStorage.setItem("playerComparisonIds", JSON.stringify(selectedPlayers));
-      console.log("[PlayersPage] Saved selected players to localStorage before navigation:", selectedPlayers);
     } catch (e) {
       console.warn("[PlayersPage] Failed to save to localStorage:", e);
     }
 
-    // Redirect to compare page with selected player IDs
     const idsParam = selectedPlayers.join(",");
-    console.log("[PlayersPage] Redirecting to compare with IDs:", idsParam, "selectedPlayers:", selectedPlayers);
     router.push(`/players/compare?ids=${idsParam}`);
   }
 
@@ -620,10 +645,16 @@ export default function PlayersPage() {
               <div className="space-y-2">
                 <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">{t("myTeams")}</label>
                 <div className="relative">
-                  <select className="h-12 w-48 appearance-none rounded-lg border border-slate-800 bg-slate-900/50 px-4 pr-10 text-sm font-medium text-white outline-none transition-all focus:border-emerald-500 focus:bg-slate-900 focus:ring-2 focus:ring-emerald-500/20 hover:border-slate-700">
-                    <option className="bg-slate-900 text-white">{t("all")}</option>
-                    {teams.map((t) => (
-                      <option key={t.id} value={t.id} className="bg-slate-900 text-white">{t.name}</option>
+                  <select
+                    value={filterTeamId}
+                    onChange={(e) => setFilterTeamId(e.target.value)}
+                    className="h-12 w-48 appearance-none rounded-lg border border-slate-800 bg-slate-900/50 px-4 pr-10 text-sm font-medium text-white outline-none transition-all focus:border-emerald-500 focus:bg-slate-900 focus:ring-2 focus:ring-emerald-500/20 hover:border-slate-700"
+                  >
+                    <option value="" className="bg-slate-900 text-white">{t("all")}</option>
+                    {teams.map((team) => (
+                      <option key={team.id} value={team.id} className="bg-slate-900 text-white">
+                        {team.name}
+                      </option>
                     ))}
                   </select>
                   <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
@@ -651,12 +682,23 @@ export default function PlayersPage() {
               <div className="space-y-2">
                 <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">{t("position")}</label>
                 <div className="relative">
-                  <select className="h-12 w-36 appearance-none rounded-lg border border-slate-800 bg-slate-900/50 px-4 pr-10 text-sm font-medium text-white outline-none transition-all focus:border-emerald-500 focus:bg-slate-900 focus:ring-2 focus:ring-emerald-500/20 hover:border-slate-700">
-                    <option className="bg-slate-900 text-white">{t("all")}</option>
-                    <option className="bg-slate-900 text-white">GK</option>
-                    <option className="bg-slate-900 text-white">DF</option>
-                    <option className="bg-slate-900 text-white">MF</option>
-                    <option className="bg-slate-900 text-white">FW</option>
+                  <select
+                    value={filterPosition}
+                    onChange={(e) => setFilterPosition(e.target.value)}
+                    className="h-12 w-36 appearance-none rounded-lg border border-slate-800 bg-slate-900/50 px-4 pr-10 text-sm font-medium text-white outline-none transition-all focus:border-emerald-500 focus:bg-slate-900 focus:ring-2 focus:ring-emerald-500/20 hover:border-slate-700"
+                  >
+                    <option value="" className="bg-slate-900 text-white">{t("all")}</option>
+                    {availablePositions.length > 0
+                      ? availablePositions.map((position) => (
+                          <option key={position} value={position} className="bg-slate-900 text-white">
+                            {position}
+                          </option>
+                        ))
+                      : ["GK", "DF", "MF", "FW"].map((position) => (
+                          <option key={position} value={position} className="bg-slate-900 text-white">
+                            {position}
+                          </option>
+                        ))}
                   </select>
                   <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
                     <svg className="h-5 w-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -682,10 +724,14 @@ export default function PlayersPage() {
                   </div>
                 </div>
               </div>
-              {searchQuery && (
+              {(searchQuery || hasActiveFilters) && (
                 <div className="flex items-end">
                   <button
-                    onClick={() => setSearchQuery("")}
+                    onClick={() => {
+                      setSearchQuery("");
+                      setFilterTeamId("");
+                      setFilterPosition("");
+                    }}
                     className="h-12 rounded-lg border border-slate-700 bg-slate-800/50 px-5 text-sm font-semibold text-slate-300 transition-all hover:bg-slate-800 hover:border-slate-600"
                   >
                     {t("clear")}
@@ -704,7 +750,7 @@ export default function PlayersPage() {
               <table className="w-full border-collapse text-sm text-slate-300">
                 <thead className="bg-slate-900/60 text-slate-400 border-b border-slate-800">
                   <tr>
-                    <th className="px-6 py-4 text-left">
+                    <th className="px-3 py-3 text-left">
                       <input
                         type="checkbox"
                         checked={selectedPlayers.length === filteredPlayers.length && filteredPlayers.length > 0}
@@ -712,23 +758,23 @@ export default function PlayersPage() {
                         className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-500 cursor-pointer"
                       />
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide">{t("playerId")}</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide">{t("playerName")}</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide">{t("teamName")}</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide">
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">{t("playerId")}</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">{t("playerName")}</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">{t("teamName")}</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">
                       {t("senseScore")} <span className="text-[9px]">⇅</span>
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide">
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">
                       {t("matches")} <span className="text-[9px]">⇅</span>
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide">
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">
                       {t("gameTime")} <span className="text-[9px]">⇅</span>
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide">{t("position")}</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide">{t("appStatus")}</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide">{t("lastActivity")}</th>
-                    <th className="px-6 py-4 text-center text-xs font-semibold uppercase tracking-wide">{t("goto")}</th>
-                    <th className="px-6 py-4 text-center text-xs font-semibold uppercase tracking-wide">{t("actions")}</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">{t("position")}</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">{t("appStatus")}</th>
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide">{t("lastActivity")}</th>
+                    <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wide">{t("goto")}</th>
+                    <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wide">{t("actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -777,7 +823,7 @@ export default function PlayersPage() {
                     <>
                       {filteredPlayers.map((p, idx) => (
                       <tr key={p.id} data-player-id={p.id} className={`border-t border-slate-800/50 hover:bg-slate-900/30 transition ${selectedPlayers.includes(p.id) ? "bg-emerald-500/10 border-emerald-500/30" : ""}`}>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <input
                             type="checkbox"
                             checked={selectedPlayers.includes(p.id)}
@@ -785,23 +831,23 @@ export default function PlayersPage() {
                             className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-500 cursor-pointer"
                           />
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <span className="text-xs font-mono text-slate-400">{60000 + p.id}</span>
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-purple-500/20 to-emerald-500/20 border border-purple-500/30">
-                              <span className="text-sm font-bold text-purple-400">
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-purple-500/20 to-emerald-500/20 border border-purple-500/30">
+                              <span className="text-xs font-bold text-purple-400">
                                 {p.name.charAt(0).toUpperCase()}
                               </span>
                             </div>
-                            <span className="text-sm font-semibold text-white">{p.name}</span>
+                            <span className="text-sm font-semibold text-white whitespace-nowrap">{p.name}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <span className="text-sm text-slate-400">{p.team?.name || p.club || "-"}</span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <div className="flex items-center gap-2">
                             <svg className="h-4 w-4 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
                               <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
@@ -811,27 +857,27 @@ export default function PlayersPage() {
                             </span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <span className="text-sm text-slate-300">{p.matchesCount || 0}</span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <span className="text-sm text-slate-300">{p.totalGameTime || 0}</span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <span className="inline-flex items-center rounded-full bg-emerald-500/20 border border-emerald-500/30 px-3 py-1 text-xs font-semibold text-emerald-400">
                             {p.position}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <span className="text-sm text-slate-500">{t("notTagged")}</span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-3 py-3">
                           <span className="text-sm text-slate-500">{t("na")}</span>
                         </td>
-                        <td className="px-6 py-4 text-center">
+                        <td className="px-3 py-3 text-center">
                           <Link
                             href={`/players/${p.id}`}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition-all hover:bg-emerald-500 hover:scale-105"
+                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white whitespace-nowrap transition-all hover:bg-emerald-500 hover:scale-105"
                           >
                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -840,10 +886,12 @@ export default function PlayersPage() {
                             {t("sense")}
                           </Link>
                         </td>
-                        <td className="px-6 py-4 text-center">
+                        <td className="px-3 py-3 text-center">
                           <div className="relative">
                             <button
-                              ref={(el) => (buttonRefs.current[p.id] = el)}
+                              ref={(el) => {
+                                buttonRefs.current[p.id] = el;
+                              }}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 const button = buttonRefs.current[p.id];
@@ -856,9 +904,9 @@ export default function PlayersPage() {
                                 }
                                 setOpenActionsMenu(openActionsMenu === p.id ? null : p.id);
                               }}
-                              className="rounded-lg border border-slate-700 bg-slate-800/50 p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+                              className="rounded-lg border border-slate-700 bg-slate-800/50 p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
                             >
-                              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
                               </svg>
                             </button>

@@ -8,6 +8,18 @@ import { existsSync } from "fs";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
+async function resolveMatchId(idParam: string): Promise<number | null> {
+  if (/^\d+$/.test(idParam)) {
+    return parseInt(idParam, 10);
+  }
+
+  const match = await prisma.match.findUnique({
+    where: { slug: idParam },
+    select: { id: true },
+  });
+  return match?.id ?? null;
+}
+
 /**
  * Get upload status (for resumable uploads)
  * Returns which parts have been uploaded
@@ -19,20 +31,23 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   const { id } = await params;
-  const matchId = parseInt(id);
-
-  if (isNaN(matchId)) {
-    return NextResponse.json({ ok: false, message: "Invalid match ID" }, { status: 400 });
+  const matchId = await resolveMatchId(id);
+  if (!matchId) {
+    return NextResponse.json({ ok: false, message: "Invalid match reference" }, { status: 400 });
   }
 
   try {
     const uploadId = request.nextUrl.searchParams.get("uploadId");
+    const customStoragePath = request.nextUrl.searchParams.get("customStoragePath");
 
     if (!uploadId) {
       return NextResponse.json({ ok: false, message: "Upload ID required" }, { status: 400 });
     }
 
-    const partsDir = join(process.cwd(), "uploads", "videos", `match-${matchId}`, "parts", uploadId);
+    const baseDir = customStoragePath
+      ? customStoragePath
+      : join(process.cwd(), "uploads", "videos", `match-${matchId}`);
+    const partsDir = join(baseDir, "parts", uploadId);
 
     if (!existsSync(partsDir)) {
       return NextResponse.json({

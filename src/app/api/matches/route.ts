@@ -6,7 +6,9 @@ export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   try {
-    // GET is public - frontend pages handle authentication checks
+    // Get current user to filter by their teams
+    const user = await getCurrentUser();
+    
     const searchParams = request.nextUrl.searchParams;
     const competition = searchParams.get("competition");
     const season = searchParams.get("season");
@@ -17,6 +19,36 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get("limit");
 
     const where: any = {};
+
+    // Filter by user's teams if user is logged in
+    if (user) {
+      // Get user's team IDs (from UserTeam memberships and created teams)
+      const userTeams = await prisma.userTeam.findMany({
+        where: { userId: user.id, status: "active" },
+        select: { teamId: true },
+      });
+      
+      const createdTeams = await prisma.team.findMany({
+        where: { createdById: user.id },
+        select: { id: true },
+      });
+      
+      const userTeamIds = [
+        ...userTeams.map((ut) => ut.teamId),
+        ...createdTeams.map((t) => t.id),
+      ];
+
+      // Only show matches for user's teams
+      if (userTeamIds.length > 0) {
+        where.OR = [
+          { homeTeamId: { in: userTeamIds } },
+          { awayTeamId: { in: userTeamIds } },
+        ];
+      } else {
+        // User has no teams - return empty
+        return NextResponse.json({ ok: true, matches: [] });
+      }
+    }
 
     if (competition && competition !== "All") {
       where.competition = competition;

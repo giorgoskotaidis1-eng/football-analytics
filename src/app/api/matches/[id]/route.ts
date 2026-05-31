@@ -11,8 +11,28 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   const { id } = await params;
-  const match = await prisma.match.findUnique({
-    where: { slug: id },
+  
+  // Get user's team IDs to verify access
+  const userTeams = await prisma.userTeam.findMany({
+    where: { userId: user.id, status: "active" },
+    select: { teamId: true },
+  });
+  
+  const createdTeams = await prisma.team.findMany({
+    where: { createdById: user.id },
+    select: { id: true },
+  });
+  
+  const userTeamIds = [
+    ...userTeams.map((ut) => ut.teamId),
+    ...createdTeams.map((t) => t.id),
+  ];
+
+  const numericId = /^\d+$/.test(id) ? parseInt(id, 10) : null;
+  const match = await prisma.match.findFirst({
+    where: {
+      OR: [{ slug: id }, ...(numericId !== null ? [{ id: numericId }] : [])],
+    },
     include: {
       homeTeam: true,
       awayTeam: true,
@@ -21,6 +41,16 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   if (!match) {
     return NextResponse.json({ ok: false, message: "Match not found" }, { status: 404 });
+  }
+
+  // Verify user has access to this match (through teams)
+  const hasAccess = userTeamIds.length > 0 && (
+    (match.homeTeamId && userTeamIds.includes(match.homeTeamId)) ||
+    (match.awayTeamId && userTeamIds.includes(match.awayTeamId))
+  );
+
+  if (!hasAccess && userTeamIds.length > 0) {
+    return NextResponse.json({ ok: false, message: "You don't have access to this match" }, { status: 403 });
   }
 
   return NextResponse.json({ ok: true, match });
@@ -60,8 +90,19 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (body.shotsHome !== undefined) updateData.shotsHome = body.shotsHome;
   if (body.shotsAway !== undefined) updateData.shotsAway = body.shotsAway;
 
+  const numericIdPatch = /^\d+$/.test(id) ? parseInt(id, 10) : null;
+  const existing = await prisma.match.findFirst({
+    where: {
+      OR: [{ slug: id }, ...(numericIdPatch !== null ? [{ id: numericIdPatch }] : [])],
+    },
+    select: { id: true },
+  });
+  if (!existing) {
+    return NextResponse.json({ ok: false, message: "Match not found" }, { status: 404 });
+  }
+
   const match = await prisma.match.update({
-    where: { slug: id },
+    where: { id: existing.id },
     data: updateData,
     include: {
       homeTeam: {
@@ -83,7 +124,17 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   }
 
   const { id } = await params;
-  await prisma.match.delete({ where: { slug: id } });
+  const numericIdDel = /^\d+$/.test(id) ? parseInt(id, 10) : null;
+  const existing = await prisma.match.findFirst({
+    where: {
+      OR: [{ slug: id }, ...(numericIdDel !== null ? [{ id: numericIdDel }] : [])],
+    },
+    select: { id: true },
+  });
+  if (!existing) {
+    return NextResponse.json({ ok: false, message: "Match not found" }, { status: 404 });
+  }
+  await prisma.match.delete({ where: { id: existing.id } });
 
   return NextResponse.json({ ok: true, message: "Match deleted" });
 }

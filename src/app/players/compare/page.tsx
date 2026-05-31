@@ -62,7 +62,7 @@ export default function PlayerComparePage() {
   const [loading, setLoading] = useState(false);
   const [showPer90, setShowPer90] = useState(true);
   const [mounted, setMounted] = useState(false);
-  const [statCategory, setStatCategory] = useState<"all" | "attacking" | "passing" | "defending">("all");
+  const [statCategory, setStatCategory] = useState<"all" | "attacking" | "passing">("all");
   
   // Fix hydration mismatch by only rendering dynamic content after mount
   useEffect(() => {
@@ -215,6 +215,7 @@ export default function PlayerComparePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ playerIds: uniqueIds }),
+        credentials: "include",
       });
 
       let data: any = {};
@@ -235,134 +236,78 @@ export default function PlayerComparePage() {
         playersCount: data.players?.length 
       });
       
-      if (res.ok && data.ok && Array.isArray(data.players)) {
+      const successPayload =
+        res.ok &&
+        data &&
+        typeof data === "object" &&
+        Array.isArray(data.players) &&
+        data.ok !== false;
+
+      if (successPayload) {
         console.log("[PlayerCompare] ✅ Successfully received", data.players.length, "players from API");
         console.log("[PlayerCompare] Player stats data:", data.players.map((p: any) => ({ id: p.id, name: p.name })));
         console.log("[PlayerCompare] Expected", uniqueIds.length, "players, got", data.players.length);
-        
-        // ALWAYS ensure we have stats for ALL selected players (like Instat/Wyscout)
-        // Create a map of received players
-        const receivedPlayersMap = new Map(data.players.map((p: any) => [p.id, p]));
-        
-        console.log("[PlayerCompare] Building final stats for", uniqueIds.length, "selected players");
-        console.log("[PlayerCompare] API returned", data.players.length, "players");
-        console.log("[PlayerCompare] allPlayers available:", allPlayers.length);
-        
-        // Build final stats array with ALL selected players in the correct order
+
+        const receivedPlayersMap = new Map(
+          data.players.map((p: any) => [Number(p.id), p]),
+        );
+
+        const missingFromApi = uniqueIds.filter((id) => !receivedPlayersMap.has(Number(id)));
+
+        if (missingFromApi.length > 0) {
+          toast(t("comparePlayersSkippedUnavailable"), { icon: "ℹ️" });
+        }
+
+        const keptIds = uniqueIds.filter((id) => receivedPlayersMap.has(Number(id)));
+
+        if (keptIds.length === 0) {
+          toast.error(t("compareNoPlayersLoaded"));
+          try {
+            localStorage.removeItem("playerComparisonIds");
+          } catch {
+            /* ignore */
+          }
+          router.replace("/players");
+          setPlayerStats([]);
+          return;
+        }
+
+        const idsChanged =
+          keptIds.length !== uniqueIds.length ||
+          !keptIds.every((id, i) => id === uniqueIds[i]);
+
+        if (idsChanged) {
+          setSelectedPlayers(keptIds);
+          router.replace(`/players/compare?ids=${keptIds.join(",")}`);
+          try {
+            localStorage.setItem("playerComparisonIds", JSON.stringify(keptIds));
+          } catch {
+            /* ignore */
+          }
+        }
+
         const finalStats: any[] = [];
-        for (const id of uniqueIds) {
-          // If API returned stats for this player, use them
-          if (receivedPlayersMap.has(id)) {
-            finalStats.push(receivedPlayersMap.get(id));
-            console.log("[PlayerCompare] ✅ Using API stats for player ID:", id);
-            continue;
-          }
-          
-          // Otherwise, create placeholder stats from allPlayers
-          const player = allPlayers.find(p => p.id === id);
-          if (!player) {
-            console.error("[PlayerCompare] ❌ Player not found in allPlayers:", id);
-            console.error("[PlayerCompare] Available player IDs:", allPlayers.map(p => p.id));
-            // Still create placeholder with minimal info
-            finalStats.push({
-              id: id,
-              name: `Player ${id}`,
-              position: "N/A",
-              age: null,
-              number: null,
-              team: null,
-              matches: 0,
-              minutes: 0,
-              goals: 0,
-              assists: 0,
-              shots: 0,
-              shotsOnTarget: 0,
-              totalXG: 0,
-              averageXG: 0,
-              xA: 0,
-              passes: 0,
-              successfulPasses: 0,
-              passAccuracy: 0,
-              touches: 0,
-              goalsPer90: 0,
-              assistsPer90: 0,
-              shotsPer90: 0,
-              xGPer90: 0,
-              xAPer90: 0,
-              passesPer90: 0,
-              touchesPer90: 0,
-              radarMetrics: {
-                shooting: 0,
-                creativity: 0,
-                passing: 0,
-                involvement: 0,
-                efficiency: 0,
-              },
-            });
-            continue;
-          }
-          
-          console.log("[PlayerCompare] Creating placeholder stats for:", player.name, "ID:", id);
-          finalStats.push({
-            id: player.id,
-            name: player.name,
-            position: player.position,
-            age: player.age,
-            number: player.number,
-            team: player.team,
-            matches: 0,
-            minutes: 0,
-            goals: 0,
-            assists: 0,
-            shots: 0,
-            shotsOnTarget: 0,
-            totalXG: 0,
-            averageXG: 0,
-            xA: 0,
-            passes: 0,
-            successfulPasses: 0,
-            passAccuracy: 0,
-            touches: 0,
-            goalsPer90: 0,
-            assistsPer90: 0,
-            shotsPer90: 0,
-            xGPer90: 0,
-            xAPer90: 0,
-            passesPer90: 0,
-            touchesPer90: 0,
-            radarMetrics: {
-              shooting: 0,
-              creativity: 0,
-              passing: 0,
-              involvement: 0,
-              efficiency: 0,
-            },
-          });
+        for (const id of keptIds) {
+          const row = receivedPlayersMap.get(Number(id));
+          if (row) finalStats.push(row);
         }
-        
-        const validFinalStats = finalStats.filter(Boolean);
-        console.log("[PlayerCompare] ===== FINAL STATS =====");
-        console.log("[PlayerCompare] Final stats array:", validFinalStats.length, "players");
-        console.log("[PlayerCompare] Final player names:", validFinalStats.map((p: any) => `${p.id}: ${p.name}`));
-        console.log("[PlayerCompare] Final player IDs:", validFinalStats.map((p: any) => p.id));
-        
-        if (validFinalStats.length !== uniqueIds.length) {
-          console.error("[PlayerCompare] ❌ MISMATCH! Expected", uniqueIds.length, "but got", validFinalStats.length);
-          console.error("[PlayerCompare] Expected IDs:", uniqueIds);
-          console.error("[PlayerCompare] Got IDs:", validFinalStats.map((p: any) => p.id));
-        } else {
-          console.log("[PlayerCompare] ✅ All players included in final stats!");
-        }
-        
-        setPlayerStats(validFinalStats);
+
+        setPlayerStats(finalStats);
       } else {
-        console.error("[PlayerCompare] Failed:", { 
-          resOk: res.ok, 
-          dataOk: data.ok, 
-          message: data.message,
-          status: res.status 
-        });
-        toast.error(data.message || `Failed to fetch comparison data (Status: ${res.status})`);
+        const hint = [
+          `http ${res.status}`,
+          typeof data?.ok !== "undefined" ? `body.ok=${data.ok}` : null,
+          data?.message ? `message=${data.message}` : null,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        console.warn("[PlayerCompare] Compare unavailable:", hint || "unknown");
+        toast.error(
+          data?.message ||
+            (res.status === 401
+              ? t("compareLoginRequired") || "Please log in to compare players."
+              : `Failed to load comparison (${res.status})`),
+        );
         setPlayerStats([]);
       }
     } catch (error) {
@@ -519,9 +464,9 @@ export default function PlayerComparePage() {
     { label: "Touches", key: "touches", per90Key: "touchesPer90", category: "all" as const },
   ];
 
-  const comparisonStats = statCategory === "all" 
-    ? allStats 
-    : allStats.filter(s => s.category === statCategory || s.category === "all");
+  const comparisonStats = statCategory === "all"
+    ? allStats
+    : allStats.filter((s) => s.category === statCategory);
 
   return (
     <>
@@ -661,7 +606,7 @@ export default function PlayerComparePage() {
                 {playerStats.map((player, idx) => {
                   const colorClasses = [
                     { bg: "from-emerald-500/20 to-emerald-600/10", text: "text-emerald-300", border: "border-emerald-500/40", accent: "text-emerald-400", bar: "bg-emerald-500", cardBg: "bg-emerald-500/5" },
-                    { bg: "from-emerald-500/20 to-emerald-600/10", text: "text-emerald-300", border: "border-emerald-500/40", accent: "text-emerald-400", bar: "bg-emerald-500", cardBg: "bg-emerald-500/5" },
+                    { bg: "from-blue-500/20 to-blue-600/10", text: "text-blue-300", border: "border-blue-500/40", accent: "text-blue-400", bar: "bg-blue-500", cardBg: "bg-blue-500/5" },
                     { bg: "from-purple-500/20 to-purple-600/10", text: "text-purple-300", border: "border-purple-500/40", accent: "text-purple-400", bar: "bg-purple-500", cardBg: "bg-purple-500/5" },
                     { bg: "from-orange-500/20 to-orange-600/10", text: "text-orange-300", border: "border-orange-500/40", accent: "text-orange-400", bar: "bg-orange-500", cardBg: "bg-orange-500/5" },
                   ];
@@ -682,31 +627,69 @@ export default function PlayerComparePage() {
                         </div>
                       </div>
                       
-                      <div className="grid grid-cols-2 gap-3 mb-3">
-                        <div className={`rounded-lg ${color.cardBg} p-2.5 border ${color.border}/30`}>
-                          <p className="text-[10px] text-slate-400 mb-1">Matches</p>
-                          <p className={`text-xl font-bold ${color.accent}`}>{player.matches}</p>
+                      {statCategory === "all" && (
+                        <>
+                          <div className="grid grid-cols-2 gap-3 mb-3">
+                            <div className={`rounded-lg ${color.cardBg} p-2.5 border ${color.border}/30`}>
+                              <p className="text-[10px] text-slate-400 mb-1">Matches</p>
+                              <p className={`text-xl font-bold ${color.accent}`}>{player.matches}</p>
+                            </div>
+                            <div className={`rounded-lg ${color.cardBg} p-2.5 border ${color.border}/30`}>
+                              <p className="text-[10px] text-slate-400 mb-1">Minutes</p>
+                              <p className={`text-xl font-bold ${color.accent}`}>{player.minutes}</p>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/50">
+                            <div className="text-center">
+                              <p className="text-[9px] text-slate-400 mb-0.5">Goals</p>
+                              <p className={`text-sm font-bold ${color.accent}`}>{player.goals}</p>
+                            </div>
+                            <div className="text-center">
+                              <p className="text-[9px] text-slate-400 mb-0.5">Assists</p>
+                              <p className={`text-sm font-bold ${color.accent}`}>{player.assists}</p>
+                            </div>
+                            <div className="text-center">
+                              <p className="text-[9px] text-slate-400 mb-0.5">xG</p>
+                              <p className={`text-sm font-bold ${color.text}`}>{player.totalXG.toFixed(1)}</p>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {statCategory === "attacking" && (
+                        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/50">
+                          <div className="text-center">
+                            <p className="text-[9px] text-slate-400 mb-0.5">Goals</p>
+                            <p className={`text-sm font-bold ${color.accent}`}>{player.goals}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-[9px] text-slate-400 mb-0.5">Shots</p>
+                            <p className={`text-sm font-bold ${color.accent}`}>{player.shots}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-[9px] text-slate-400 mb-0.5">xG</p>
+                            <p className={`text-sm font-bold ${color.text}`}>{player.totalXG.toFixed(1)}</p>
+                          </div>
                         </div>
-                        <div className={`rounded-lg ${color.cardBg} p-2.5 border ${color.border}/30`}>
-                          <p className="text-[10px] text-slate-400 mb-1">Minutes</p>
-                          <p className={`text-xl font-bold ${color.accent}`}>{player.minutes}</p>
+                      )}
+
+                      {statCategory === "passing" && (
+                        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/50">
+                          <div className="text-center">
+                            <p className="text-[9px] text-slate-400 mb-0.5">Passes</p>
+                            <p className={`text-sm font-bold ${color.accent}`}>{player.passes}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-[9px] text-slate-400 mb-0.5">Successful</p>
+                            <p className={`text-sm font-bold ${color.accent}`}>{player.successfulPasses}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-[9px] text-slate-400 mb-0.5">Accuracy</p>
+                            <p className={`text-sm font-bold ${color.text}`}>{player.passAccuracy.toFixed(1)}%</p>
+                          </div>
                         </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/50">
-                        <div className="text-center">
-                          <p className="text-[9px] text-slate-400 mb-0.5">Goals</p>
-                          <p className={`text-sm font-bold ${color.accent}`}>{player.goals}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-[9px] text-slate-400 mb-0.5">Assists</p>
-                          <p className={`text-sm font-bold ${color.accent}`}>{player.assists}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-[9px] text-slate-400 mb-0.5">xG</p>
-                          <p className={`text-sm font-bold ${color.text}`}>{player.totalXG.toFixed(1)}</p>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   );
                 })}
@@ -758,9 +741,9 @@ export default function PlayerComparePage() {
               </div>
             )}
 
-            {/* Radar Chart - Only show if 2+ players with stats */}
+            {/* Radar by selected category */}
             {playerStats.length >= 2 && playerStats.some(p => p.matches > 0) && (
-              <PlayerRadarChart players={playerStats} />
+              <PlayerRadarChart players={playerStats} mode={statCategory} />
             )}
 
             {/* Stats Comparison Table - Enhanced Instat/StepOut Style */}
@@ -785,7 +768,7 @@ export default function PlayerComparePage() {
                       {playerStats.map((player, idx) => {
                         const colorClasses = [
                           "border-emerald-500/40",
-                          "border-emerald-500/40",
+                          "border-blue-500/40",
                           "border-purple-500/40",
                           "border-orange-500/40",
                         ];
@@ -842,7 +825,7 @@ export default function PlayerComparePage() {
                             
                             const colorClasses = [
                               { best: "text-emerald-400", worst: "text-red-400", bar: "bg-emerald-500", border: "border-emerald-500/40" },
-                              { best: "text-emerald-400", worst: "text-red-400", bar: "bg-emerald-500", border: "border-emerald-500/40" },
+                              { best: "text-blue-400", worst: "text-red-400", bar: "bg-blue-500", border: "border-blue-500/40" },
                               { best: "text-purple-400", worst: "text-red-400", bar: "bg-purple-500", border: "border-purple-500/40" },
                               { best: "text-orange-400", worst: "text-red-400", bar: "bg-orange-500", border: "border-orange-500/40" },
                             ];

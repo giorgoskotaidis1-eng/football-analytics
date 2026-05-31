@@ -6,7 +6,9 @@ export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   try {
-    // GET is public - frontend pages handle authentication checks
+    // Get current user to filter by their teams
+    const user = await getCurrentUser();
+    
     const searchParams = request.nextUrl.searchParams;
     const teamId = searchParams.get("teamId");
     const searchParam = searchParams.get("search");
@@ -17,9 +19,46 @@ export async function GET(request: NextRequest) {
     const skip = (page - 1) * limit;
 
     const where: any = {};
-    if (teamId) {
+    
+    // Filter by user's teams if user is logged in
+    if (user) {
+      // Get user's team IDs
+      const userTeams = await prisma.userTeam.findMany({
+        where: { userId: user.id, status: "active" },
+        select: { teamId: true },
+      });
+      
+      const createdTeams = await prisma.team.findMany({
+        where: { createdById: user.id },
+        select: { id: true },
+      });
+      
+      const userTeamIds = [
+        ...userTeams.map((ut) => ut.teamId),
+        ...createdTeams.map((t) => t.id),
+      ];
+
+      if (userTeamIds.length > 0) {
+        // If specific teamId requested, verify it belongs to user
+        if (teamId) {
+          const requestedTeamId = parseInt(teamId);
+          if (userTeamIds.includes(requestedTeamId)) {
+            where.teamId = requestedTeamId;
+          } else {
+            // User doesn't have access to this team
+            return NextResponse.json({ ok: true, players: [], pagination: { page: 1, limit, total: 0, totalPages: 0, hasMore: false } });
+          }
+        } else {
+          // Show players from all user's teams
+          where.teamId = { in: userTeamIds };
+        }
+      } else {
+        // User has no teams - return empty
+        return NextResponse.json({ ok: true, players: [], pagination: { page: 1, limit, total: 0, totalPages: 0, hasMore: false } });
+      }
+    } else if (teamId) {
+      // Public access with specific teamId
       where.teamId = parseInt(teamId);
-      console.log(`[players.GET] Filtering by teamId: ${teamId}`);
     }
     
     // Note: SQLite doesn't support case-insensitive search with mode: "insensitive"

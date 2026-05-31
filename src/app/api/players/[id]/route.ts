@@ -14,6 +14,22 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const { id } = await params;
     console.log("[players/[id].GET] Looking for player with slug/id:", id);
 
+    // Get user's team IDs to verify access
+    const userTeams = await prisma.userTeam.findMany({
+      where: { userId: user.id, status: "active" },
+      select: { teamId: true },
+    });
+    
+    const createdTeams = await prisma.team.findMany({
+      where: { createdById: user.id },
+      select: { id: true },
+    });
+    
+    const userTeamIds = [
+      ...userTeams.map((ut) => ut.teamId),
+      ...createdTeams.map((t) => t.id),
+    ];
+
     // Try to find by slug first, then by id if slug doesn't work
     let player = await prisma.player.findUnique({
       where: { slug: id },
@@ -77,6 +93,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     }
 
     console.log("[players/[id].GET] Found player:", player.id, player.name, player.slug);
+
+    // Verify user has access to this player (through team)
+    if (player.teamId && !userTeamIds.includes(player.teamId)) {
+      return NextResponse.json({ ok: false, message: "You don't have access to this player" }, { status: 403 });
+    }
+    if (!player.teamId && userTeamIds.length > 0) {
+      // Player without team - only allow if user has no teams (edge case)
+      return NextResponse.json({ ok: false, message: "You don't have access to this player" }, { status: 403 });
+    }
 
   // Calculate detailed stats from events
   const events = player.matchEvents || [];

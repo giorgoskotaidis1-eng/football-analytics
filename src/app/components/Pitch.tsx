@@ -29,16 +29,40 @@ export function Pitch({
         viewBox="0 0 1 1"
         preserveAspectRatio="none"
         className="w-full h-full rounded-lg"
-        style={{ background: "linear-gradient(135deg, #0f5132 0%, #0a3d2e 100%)" }}
+        style={{ background: "linear-gradient(180deg, #0f5132 0%, #0c4a2f 100%)" }}
       >
+        <defs>
+          <linearGradient id="pitchStripes" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="rgba(255,255,255,0.03)" />
+            <stop offset="50%" stopColor="rgba(255,255,255,0.00)" />
+            <stop offset="100%" stopColor="rgba(255,255,255,0.03)" />
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="1" height="1" fill="url(#pitchStripes)" />
+
         {/* Pitch lines */}
-        <rect x="0" y="0" width="1" height="1" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="0.008" />
-        <line x1="0.5" y1="0" x2="0.5" y2="1" stroke="rgba(255,255,255,0.3)" strokeWidth="0.008" />
-        <circle cx="0.5" cy="0.5" r="0.15" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="0.008" />
-        <rect x="0" y="0" width="0.2" height="0.2" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="0.008" />
-        <rect x="0" y="0.8" width="0.2" height="0.2" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="0.008" />
-        <rect x="0.8" y="0" width="0.2" height="0.2" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="0.008" />
-        <rect x="0.8" y="0.8" width="0.2" height="0.2" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="0.008" />
+        <rect x="0.002" y="0.002" width="0.996" height="0.996" fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth="0.006" />
+        <line x1="0.5" y1="0.002" x2="0.5" y2="0.998" stroke="rgba(255,255,255,0.45)" strokeWidth="0.006" />
+        <circle cx="0.5" cy="0.5" r="0.15" fill="none" stroke="rgba(255,255,255,0.42)" strokeWidth="0.006" />
+        <circle cx="0.5" cy="0.5" r="0.006" fill="rgba(255,255,255,0.75)" />
+
+        {/* Penalty areas and 6-yard boxes */}
+        <rect x="0.002" y="0.212" width="0.164" height="0.576" fill="none" stroke="rgba(255,255,255,0.42)" strokeWidth="0.006" />
+        <rect x="0.002" y="0.368" width="0.065" height="0.264" fill="none" stroke="rgba(255,255,255,0.42)" strokeWidth="0.006" />
+        <rect x="0.834" y="0.212" width="0.164" height="0.576" fill="none" stroke="rgba(255,255,255,0.42)" strokeWidth="0.006" />
+        <rect x="0.933" y="0.368" width="0.065" height="0.264" fill="none" stroke="rgba(255,255,255,0.42)" strokeWidth="0.006" />
+
+        {/* Penalty spots */}
+        <circle cx="0.11" cy="0.5" r="0.0055" fill="rgba(255,255,255,0.72)" />
+        <circle cx="0.89" cy="0.5" r="0.0055" fill="rgba(255,255,255,0.72)" />
+
+        {/* Penalty arcs */}
+        <path d="M 0.214 0.44 A 0.09 0.09 0 0 0 0.214 0.56" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="0.006" />
+        <path d="M 0.786 0.44 A 0.09 0.09 0 0 1 0.786 0.56" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="0.006" />
+
+        {/* Goals */}
+        <rect x="-0.018" y="0.44" width="0.02" height="0.12" fill="none" stroke="rgba(255,255,255,0.36)" strokeWidth="0.004" />
+        <rect x="0.998" y="0.44" width="0.02" height="0.12" fill="none" stroke="rgba(255,255,255,0.36)" strokeWidth="0.004" />
 
         {/* Player markers */}
         {validEntries.map(([pid, p]) => {

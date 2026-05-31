@@ -8,20 +8,16 @@ type Props = {
   autoPlay?: boolean;
 };
 
-// Helper to detect MIME type from URL
-function getMimeType(src: string): string {
-  const ext = src.toLowerCase().split(".").pop() || "";
-  const mimeMap: Record<string, string> = {
-    mp4: "video/mp4",
-    webm: "video/webm",
-    ogg: "video/ogg",
-    mov: "video/quicktime",
-    avi: "video/x-msvideo",
-    m3u8: "application/vnd.apple.mpegurl",
-    mkv: "video/x-matroska",
-    flv: "video/x-flv",
-  };
-  return mimeMap[ext] || "video/mp4";
+// Only use crossOrigin for real cross-origin URLs. Same-origin /api/... video must send cookies (auth).
+function needsCrossOriginAnonymous(src: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (!/^https?:\/\//i.test(src)) return false;
+    const u = new URL(src);
+    return u.origin !== window.location.origin;
+  } catch {
+    return false;
+  }
 }
 
 export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
@@ -30,14 +26,24 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
-  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastActivityAtRef = useRef<number>(0);
+  const isLoadingRef = useRef<boolean>(false);
+
+  const markActivity = (reason: string) => {
+    lastActivityAtRef.current = Date.now();
+    // Keep this log lightweight; it helps diagnose slow servers/tunnels without spamming too much.
+    console.log(`[VideoPlayer] activity: ${reason} (t=${lastActivityAtRef.current})`);
+  };
 
   // Reset error κάθε φορά που αλλάζει src
   useEffect(() => {
     setErrorMsg(null);
     setIsLoading(true);
+    isLoadingRef.current = true;
     setVideoDuration(null);
     console.log(`[VideoPlayer] Source changed to: ${src}`);
+    markActivity("src-change");
     
     // Clear any existing timeout
     if (loadingTimeoutRef.current) {
@@ -45,14 +51,39 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
       loadingTimeoutRef.current = null;
     }
     
-    // Set timeout: if video doesn't load in 10 seconds, show error
+    // Adaptive timeout:
+    // - Some videos (esp. large files / slow servers / tunnels) can legitimately take >10s to reach readyState>=2.
+    // - We only fail if there has been no meaningful activity for a while AND the video is still not ready.
+    // - We also avoid capturing stale `isLoading` by using a ref.
+    const TIMEOUT_MS = 45_000;
+    const IDLE_GRACE_MS = 15_000;
+
     loadingTimeoutRef.current = setTimeout(() => {
-      if (isLoading && videoRef.current && videoRef.current.readyState < 2) {
-        console.error("[VideoPlayer] Loading timeout - video not ready after 10s");
-        setErrorMsg("Video loading timeout. The file may be too large or the server is slow. Try refreshing.");
+      const v = videoRef.current;
+      if (!v) return;
+
+      const idleForMs = Date.now() - (lastActivityAtRef.current || 0);
+      const notReady = v.readyState < 2;
+      const stillLoading = isLoadingRef.current;
+
+      if (stillLoading && notReady && idleForMs >= IDLE_GRACE_MS) {
+        console.error(
+          "[VideoPlayer] Loading timeout",
+          JSON.stringify({
+            afterMs: TIMEOUT_MS,
+            idleForMs,
+            readyState: v.readyState,
+            networkState: v.networkState,
+            currentSrc: v.currentSrc,
+          })
+        );
+        setErrorMsg(
+          "Video loading is taking too long. The file may be large, the server/tunnel may be slow, or the URL may be unreachable. Try refresh, or open the video in a new tab."
+        );
         setIsLoading(false);
+        isLoadingRef.current = false;
       }
-    }, 10000);
+    }, TIMEOUT_MS);
     
     return () => {
       if (loadingTimeoutRef.current) {
@@ -60,7 +91,7 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
         loadingTimeoutRef.current = null;
       }
     };
-  }, [src, isLoading]);
+  }, [src]);
 
   // HLS attach (μόνο όταν src τελειώνει σε .m3u8 και υποστηρίζεται)
   useEffect(() => {
@@ -143,7 +174,7 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
         }
       };
     } else {
-      // For non-HLS videos, ensure HLS is destroyed and set src directly
+      // Progressive file (mp4/webm): React `src` on <video> is the single source of truth — avoid duplicate <source> + video.src (double fetch / quirks).
       if (hlsRef.current) {
         try {
           hlsRef.current.destroy();
@@ -152,13 +183,9 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
         }
         hlsRef.current = null;
       }
-      // Reset video element before setting new src
       video.pause();
-      video.removeAttribute("src");
       video.load();
-      // Set new src
-      video.src = src;
-      console.log(`[VideoPlayer] Set video src to: ${src}`);
+      console.log(`[VideoPlayer] Progressive video src (via element): ${src}`);
     }
   }, [src]);
 
@@ -195,8 +222,7 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
     );
   }
 
-  const isHls = src.endsWith(".m3u8") || src.includes(".m3u8");
-  const mimeType = getMimeType(src);
+  const isHls = src.includes(".m3u8");
 
   return (
     <div className="relative w-full">
@@ -207,10 +233,12 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
       )}
       <video
         ref={videoRef}
+        key={isHls ? `hls-${src}` : src}
         controls
         playsInline
         preload="auto"
-        crossOrigin="anonymous"
+        src={isHls ? undefined : src}
+        {...(needsCrossOriginAnonymous(src) ? { crossOrigin: "anonymous" as const } : {})}
         autoPlay={false}
         className="w-full rounded-lg shadow-xl bg-black"
         style={{ maxHeight: "600px" }}
@@ -219,6 +247,7 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
           const duration = videoRef.current.duration;
           const video = videoRef.current;
           console.log(`[VideoPlayer] Metadata loaded: duration=${duration}, src=${video.currentSrc}, readyState=${video.readyState}`);
+          markActivity("loadedmetadata");
           if (duration && !isNaN(duration) && isFinite(duration)) {
             setVideoDuration(duration);
             console.log(`[VideoPlayer] Video duration: ${duration.toFixed(2)}s (${(duration / 60).toFixed(2)} minutes)`);
@@ -245,6 +274,8 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
           }
           setErrorMsg(null);
           setIsLoading(false);
+          isLoadingRef.current = false;
+          markActivity("loadeddata");
           console.log("[VideoPlayer] onLoadedData: video data loaded");
         }}
         onCanPlay={() => {
@@ -255,9 +286,12 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
           }
           setErrorMsg(null);
           setIsLoading(false);
+          isLoadingRef.current = false;
+          markActivity("canplay");
           console.log("[VideoPlayer] onCanPlay: video can play");
         }}
         onProgress={() => {
+          markActivity("progress");
           if (videoRef.current) {
             const buffered = videoRef.current.buffered;
             if (buffered.length > 0) {
@@ -271,34 +305,59 @@ export function VideoPlayer({ src, startTime = 0, autoPlay = false }: Props) {
           const currentTime = videoRef.current?.currentTime;
           console.warn("[VideoPlayer] waiting (buffering) at", currentTime, "s");
           setIsLoading(true);
+          isLoadingRef.current = true;
+          markActivity("waiting");
         }}
         onPlaying={() => {
           setIsLoading(false);
+          isLoadingRef.current = false;
+          markActivity("playing");
           console.log("[VideoPlayer] Video playing");
         }}
-        onSeeking={() => setIsLoading(true)}
-        onSeeked={() => setIsLoading(false)}
+        onSeeking={() => {
+          setIsLoading(true);
+          isLoadingRef.current = true;
+          markActivity("seeking");
+        }}
+        onSeeked={() => {
+          setIsLoading(false);
+          isLoadingRef.current = false;
+          markActivity("seeked");
+        }}
         onStalled={() => {
           const currentTime = videoRef.current?.currentTime;
           console.warn("[VideoPlayer] stalled at", currentTime, "s");
           setIsLoading(true);
+          isLoadingRef.current = true;
+          markActivity("stalled");
         }}
         onError={(e) => {
           setIsLoading(false);
+          isLoadingRef.current = false;
           const v = e.currentTarget;
           const ve = v.error;
           console.error("[VideoPlayer] Video load error:", ve?.code, ve?.message, v.currentSrc);
+          markActivity("error");
           
-          // More specific error messages
           let errorText = ve
             ? `Video failed (code ${ve.code}${ve.message ? `: ${ve.message}` : ""}). Check URL/CORS/format.`
             : `Video failed. Check URL/CORS/format. src=${v.currentSrc}`;
+
+          if (
+            typeof src === "string" &&
+            src.includes("/api/") &&
+            (ve?.code === 2 || ve?.code === 4)
+          ) {
+            errorText +=
+              " Protected API URLs need an active login session; open this URL in a new tab — if you see JSON or a login page, sign in and reload.";
+          }
+
+          errorText += ` (readyState=${v.readyState}, networkState=${v.networkState})`;
           
           setErrorMsg(errorText);
         }}
       >
-        {!isHls && <source src={src} type={mimeType} />}
-        {isHls && <source src={src} type="application/vnd.apple.mpegurl" />}
+        {/* HLS (hls.js / Safari): src set in effect; progressive: src attribute above. No nested <source> — avoids double loads. */}
         Your browser does not support the video tag.
       </video>
       {errorMsg && (

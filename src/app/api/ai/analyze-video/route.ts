@@ -8,6 +8,77 @@ import { existsSync } from "fs";
 export const runtime = "nodejs";
 export const maxDuration = 300; // 5 minutes max for video processing
 
+async function runPythonAnalysisWithFallback(
+  scriptPath: string,
+  videoPath: string,
+  modelPath: string | null,
+): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+  const args = [scriptPath, videoPath, ...(modelPath ? [modelPath] : [])];
+  const candidates =
+    process.platform === "win32"
+      ? [
+          { cmd: "py", args: ["-3", ...args] },
+          { cmd: "python", args },
+          { cmd: "python3", args },
+        ]
+      : [
+          { cmd: "python3", args },
+          { cmd: "python", args },
+        ];
+
+  for (const candidate of candidates) {
+    const result = await new Promise<{
+      code: number | null;
+      stdout: string;
+      stderr: string;
+      spawnError?: string;
+    }>((resolve) => {
+      const pythonProcess = spawn(candidate.cmd, candidate.args, {
+        cwd: process.cwd(),
+        env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      });
+      let stdout = "";
+      let stderr = "";
+      pythonProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+      pythonProcess.stderr.on("data", (data) => {
+        const chunk = data.toString();
+        stderr += chunk;
+        const message = chunk.trim();
+        if (message.includes("[FootballAI]")) {
+          console.log(`[ai/analyze-video] ${message}`);
+        }
+      });
+      pythonProcess.on("error", (error) => {
+        resolve({ code: null, stdout, stderr, spawnError: error.message });
+      });
+      pythonProcess.on("close", (code) => {
+        resolve({ code, stdout, stderr });
+      });
+    });
+
+    if (result.spawnError) {
+      console.warn(`[ai/analyze-video] Failed to spawn '${candidate.cmd}': ${result.spawnError}`);
+      continue;
+    }
+
+    if (result.code === 0) {
+      return { ok: true, stdout: result.stdout };
+    }
+
+    return {
+      ok: false,
+      error: result.stderr || `Python process exited with code ${result.code}`,
+    };
+  }
+
+  return {
+    ok: false,
+    error: "Python executable not found. Install Python 3 and make sure 'py' or 'python' is available in PATH.",
+  };
+}
+
 /**
  * AI Video Analysis API
  * 
@@ -27,14 +98,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
     }
 
-    const formData = await request.formData().catch(() => null);
-    if (!formData) {
-      return NextResponse.json({ ok: false, message: "Invalid form data" }, { status: 400 });
+    const contentType = request.headers.get("content-type") || "";
+    let videoFile: File | null = null;
+    let videoUrl: string | null = null;
+    let modelPath: string | null = null;
+
+    if (contentType.includes("application/json")) {
+      const body = await request.json().catch(() => null);
+      if (body) {
+        videoUrl = typeof body.videoUrl === "string" ? body.videoUrl : null;
+        modelPath = typeof body.modelPath === "string" ? body.modelPath : null;
+      }
+    } else if (contentType.includes("application/x-www-form-urlencoded")) {
+      const bodyText = await request.text().catch(() => "");
+      const params = new URLSearchParams(bodyText);
+      videoUrl = params.get("videoUrl");
+      modelPath = params.get("modelPath");
+    } else {
+      const formData = await request.formData().catch(() => null);
+      if (formData) {
+        videoFile = formData.get("video") as File | null;
+        videoUrl = formData.get("videoUrl") as string | null;
+        modelPath = formData.get("modelPath") as string | null;
+      }
     }
 
-    const videoFile = formData.get("video") as File | null;
-    const videoUrl = formData.get("videoUrl") as string | null;
-    const modelPath = formData.get("modelPath") as string | null;
+    if (!videoFile && !videoUrl) {
+      return NextResponse.json({ ok: false, message: "Invalid form data" }, { status: 400 });
+    }
 
     if (!videoFile && !videoUrl) {
       return NextResponse.json(
@@ -97,38 +188,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Run Python analysis script
-    const pythonCommand = process.platform === "win32" ? "python" : "python3";
-    const args = [pythonScriptPath, videoPath];
-    if (modelPath) {
-      args.push(modelPath);
-    }
-
-    console.log(`[ai/analyze-video] Running: ${pythonCommand} ${args.join(" ")}`);
+    console.log(`[ai/analyze-video] Running analysis script for video: ${videoPath}`);
 
     return new Promise<NextResponse>((resolve) => {
-      const pythonProcess = spawn(pythonCommand, args, {
-        cwd: process.cwd(),
-        env: { ...process.env, PYTHONUNBUFFERED: "1" },
-      });
-
-      let stdout = "";
-      let stderr = "";
-
-      pythonProcess.stdout.on("data", (data) => {
-        stdout += data.toString();
-      });
-
-      pythonProcess.stderr.on("data", (data) => {
-        stderr += data.toString();
-        // Log progress messages
-        const message = data.toString().trim();
-        if (message.includes("[FootballAI]")) {
-          console.log(`[ai/analyze-video] ${message}`);
-        }
-      });
-
-      pythonProcess.on("close", async (code) => {
+      runPythonAnalysisWithFallback(pythonScriptPath, videoPath, modelPath).then(async (runResult) => {
         // Clean up uploaded file if it was a file upload
         if (videoFile && existsSync(videoPath)) {
           try {
@@ -139,77 +202,44 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        if (code !== 0) {
-          console.error(`[ai/analyze-video] Python process exited with code ${code}`);
-          console.error(`[ai/analyze-video] stderr: ${stderr}`);
-          resolve(
-            NextResponse.json(
-              {
-                ok: false,
-                message: "Video analysis failed",
-                error: stderr || "Unknown error",
-              },
-              { status: 500 }
-            )
-          );
+        if (runResult.ok) {
+          try {
+            const result = JSON.parse(runResult.stdout);
+            resolve(
+              NextResponse.json({
+                ok: true,
+                analysis: result,
+              })
+            );
+          } catch (parseError) {
+            console.error(`[ai/analyze-video] Failed to parse Python output:`, parseError);
+            console.error(`[ai/analyze-video] stdout:`, runResult.stdout);
+            resolve(
+              NextResponse.json(
+                {
+                  ok: false,
+                  message: "Failed to parse analysis results",
+                  error: runResult.stdout,
+                },
+                { status: 500 }
+              )
+            );
+          }
           return;
         }
 
-        try {
-          // Parse JSON output from Python script
-          const result = JSON.parse(stdout);
-          
-          resolve(
-            NextResponse.json({
-              ok: true,
-              analysis: result,
-            })
-          );
-        } catch (parseError) {
-          console.error(`[ai/analyze-video] Failed to parse Python output:`, parseError);
-          console.error(`[ai/analyze-video] stdout:`, stdout);
-          resolve(
-            NextResponse.json(
-              {
-                ok: false,
-                message: "Failed to parse analysis results",
-                error: stdout || stderr,
-              },
-              { status: 500 }
-            )
-          );
-        }
-      });
-
-      pythonProcess.on("error", (error) => {
-        console.error(`[ai/analyze-video] Failed to start Python process:`, error);
+        console.error(`[ai/analyze-video] Python analysis failed: ${runResult.error}`);
         resolve(
           NextResponse.json(
             {
               ok: false,
-              message: "Failed to start analysis process",
-              error: error.message,
+              message: "Video analysis failed",
+              error: runResult.error || "Unknown error",
             },
             { status: 500 }
           )
         );
       });
-
-      // Set timeout (5 minutes)
-      setTimeout(() => {
-        if (!pythonProcess.killed) {
-          pythonProcess.kill();
-          resolve(
-            NextResponse.json(
-              {
-                ok: false,
-                message: "Analysis timeout (exceeded 5 minutes)",
-              },
-              { status: 408 }
-            )
-          );
-        }
-      }, 300000); // 5 minutes
     });
   } catch (error) {
     console.error("[ai/analyze-video] Error:", error);

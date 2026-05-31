@@ -4,11 +4,55 @@ import { getCurrentUser } from "@/lib/auth";
 import { convertDetectedEventsToMatchEvents } from "@/lib/video-analysis";
 import { calculateXG } from "@/lib/analytics";
 import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
+import path from "path";
 import { existsSync } from "fs";
+
+/** Store path the same way Spotlight/API video route expect: project-relative `uploads/...` or absolute http(s). */
+function toStoredVideoPath(raw: string): string | null {
+  if (!raw?.trim()) return null;
+  const v = raw.trim();
+  if (/^https?:\/\//i.test(v)) return v;
+  const cwd = process.cwd();
+  const normalized = path.normalize(v);
+  const absolute =
+    path.isAbsolute(normalized) || /^[A-Za-z]:/.test(v)
+      ? normalized
+      : path.join(cwd, v.replace(/\//g, path.sep));
+  let rel = path.relative(cwd, absolute).replace(/\\/g, "/");
+  if (rel.startsWith("..")) {
+    return absolute.replace(/\\/g, "/");
+  }
+  if (!rel.startsWith("uploads/") && rel.startsWith("videos/")) {
+    rel = `uploads/${rel}`;
+  }
+  return rel;
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // 5 minutes max for video analysis
+
+// Cache invalidation helper (shared with analytics/events routes)
+declare global {
+  // eslint-disable-next-line no-var
+  var analyticsCache: Map<string, { data: any; timestamp: number; eventCount: number }> | undefined;
+}
+
+function invalidateAnalyticsCache(matchId: number) {
+  if (typeof global !== "undefined" && global.analyticsCache) {
+    global.analyticsCache.delete(`analytics-${matchId}`);
+  }
+}
+
+async function resolveMatchId(idParam: string): Promise<number | null> {
+  if (/^\d+$/.test(idParam)) {
+    return parseInt(idParam, 10);
+  }
+  const match = await prisma.match.findUnique({
+    where: { slug: idParam },
+    select: { id: true },
+  });
+  return match?.id ?? null;
+}
 
 /**
  * Video Analysis API
@@ -38,9 +82,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const { id } = await params;
-  const matchId = parseInt(id);
-
-  if (isNaN(matchId)) {
+  const matchId = await resolveMatchId(id);
+  if (!matchId) {
     return NextResponse.json({ ok: false, message: "Invalid match ID" }, { status: 400 });
   }
 
@@ -84,6 +127,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const teamRightId = requestBody.teamRightId || null;
   const attackDirection = requestBody.attackDirection || "left-to-right";
   const normalize = requestBody.normalize !== false; // Default to true
+  const replaceExisting = requestBody.replaceExisting !== false; // Default true: replace old analysis results
 
   // VALIDATION: Team side selection is mandatory
   if (!leftSideTeam || (leftSideTeam !== "home" && leftSideTeam !== "away")) {
@@ -125,6 +169,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   };
 
   try {
+    // IMPORTANT: To avoid showing "previous analyses", we replace existing events by default.
+    // This matches the expected UX: each analysis run should reflect the current video, not accumulate old data.
+    if (replaceExisting) {
+      console.log(`[video-analyze] replaceExisting=true → deleting existing events for match ${matchId}...`);
+      await prisma.matchEvent.deleteMany({ where: { matchId } });
+      // Reset aggregate match stats so stale values from previous analyses are not shown.
+      await prisma.match.update({
+        where: { id: matchId },
+        data: {
+          shotsHome: 0,
+          shotsAway: 0,
+          xgHome: 0,
+          xgAway: 0,
+        },
+      });
+      invalidateAnalyticsCache(matchId);
+    }
+
     let videoPath: string | null = null;
     
     // Save video file if uploaded (non-blocking)
@@ -147,6 +209,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ ok: false, message: "Video file, URL, or path required" }, { status: 400 });
     }
 
+    // Same video file the AI analyzes → persist on Match immediately so Spotlight stays in sync (before / even if AI fails).
+    const storedVideoPath = toStoredVideoPath(videoPath);
+    if (storedVideoPath) {
+      try {
+        await prisma.match.update({
+          where: { id: matchId },
+          data: { videoPath: storedVideoPath },
+        });
+        console.log(`[video-analyze] Match ${matchId} videoPath set for Spotlight: ${storedVideoPath}`);
+      } catch (persistErr) {
+        console.warn("[video-analyze] Could not persist videoPath:", persistErr);
+      }
+    }
+
     // Call Python AI analysis endpoint directly (internal call)
     // This uses the actual YOLO analysis from football_ai/analysis.py
     let analysisResponse = null;
@@ -161,14 +237,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       
       checkAbort();
       
-      // Create a mock FormData request for the Python endpoint
-      // NextRequest needs a proper URL and body
-      const formDataBody = new URLSearchParams();
+      // Build a proper JSON request for the AI endpoint.
+      // Previous URL-encoded payload could be parsed as invalid form data in some runtimes.
+      const analyzePayload: Record<string, any> = {};
       if (videoPath && !videoPath.startsWith("http")) {
-        formDataBody.append("videoUrl", videoPath);
+        analyzePayload.videoUrl = videoPath;
         console.log(`[video-analyze] Passing video path to analysis: ${videoPath}`);
       } else if (videoUrl) {
-        formDataBody.append("videoUrl", videoUrl);
+        analyzePayload.videoUrl = videoUrl;
         console.log(`[video-analyze] Passing video URL to analysis: ${videoUrl}`);
       }
       
@@ -178,10 +254,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         {
           method: "POST",
           headers: {
+            "content-type": "application/json",
             // Copy cookies for authentication
             cookie: request.headers.get("cookie") || "",
           },
-          body: formDataBody.toString(),
+          body: JSON.stringify(analyzePayload),
           signal: request.signal, // Pass abort signal
         }
       );
@@ -304,14 +381,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
     }
     
-    // If no analysis result, check if Python script ran but returned no events
+    // If no analysis result, return empty analysis (no synthetic/demo events)
     if (!analysisResult) {
       console.warn(`[video-analyze] No analysis result. Analysis response status: ${analysisResponse?.status}`);
       console.warn(`[video-analyze] Analysis response ok: ${analysisResponse?.ok}`);
       
-      // ALWAYS create fallback events if Python script fails or returns no results
-      // This ensures users always see statistics, even if AI analysis fails
-      console.warn(`[video-analyze] Python analysis failed or returned no results. Creating fallback demo events...`);
+      console.warn(`[video-analyze] Python analysis failed or returned no results.`);
       
       // Try to get error message from response (for logging only)
       if (analysisResponse && !analysisResponse.ok) {
@@ -323,61 +398,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         }
       }
       
-      // ALWAYS create fallback events - this ensures statistics are always available
-      const fallbackEvents = generateFallbackEvents(matchId, leftSideTeam);
-      console.log(`[video-analyze] Generated ${fallbackEvents.length} fallback events`);
-      
-      if (fallbackEvents.length > 0) {
-        console.log(`[video-analyze] Creating ${fallbackEvents.length} fallback events in database...`);
-        const createdEvents = await Promise.all(
-          fallbackEvents.map((eventData) =>
-            prisma.matchEvent.create({ data: eventData }).catch((err) => {
-              console.error(`[video-analyze] Failed to create fallback event:`, err);
-              console.error(`[video-analyze] Event data:`, JSON.stringify(eventData, null, 2));
-              return null;
-            })
-          )
-        ).then(results => results.filter(r => r !== null));
-        
-        console.log(`[video-analyze] Successfully created ${createdEvents.length} fallback events out of ${fallbackEvents.length} attempted.`);
-        
-        const homeShots = createdEvents.filter((e) => e.type === "shot" && e.team === "home").length;
-        const awayShots = createdEvents.filter((e) => e.type === "shot" && e.team === "away").length;
-        const homeXG = createdEvents
-          .filter((e) => e.type === "shot" && e.team === "home")
-          .reduce((sum, e) => sum + (e.xg || 0), 0);
-        const awayXG = createdEvents
-          .filter((e) => e.type === "shot" && e.team === "away")
-          .reduce((sum, e) => sum + (e.xg || 0), 0);
-        
-        console.log(`[video-analyze] Fallback statistics: homeShots=${homeShots}, awayShots=${awayShots}, homeXG=${homeXG}, awayXG=${awayXG}`);
-        
-        await prisma.match.update({
-          where: { id: matchId },
-          data: {
-            shotsHome: homeShots,
-            shotsAway: awayShots,
-            xgHome: homeXG,
-            xgAway: awayXG,
-          },
-        });
-        
-        return NextResponse.json({
-          ok: true,
-          message: `Created ${createdEvents.length} demo events for testing. AI analysis will be improved in future updates.`,
-          analysis: {
-            eventsDetected: createdEvents.length,
-            shots: { home: homeShots, away: awayShots },
-            xg: { home: homeXG, away: awayXG },
-            duration: 0,
-            totalFrames: 0,
-            fallback: true,
-          },
-          videoPath: videoPath.startsWith("http") ? videoPath : `/uploads/videos/match-${matchId}/${videoPath.split("/").pop()}`,
-        });
-      }
-      
-      // This should never happen, but just in case
       return NextResponse.json({
         ok: true,
         message: "Video uploaded successfully, but no events were detected. You can add events manually.",
@@ -406,58 +426,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     console.log(`[video-analyze] Converting ${analysisResult.events?.length || 0} events to MatchEvent format`);
     
     if (!analysisResult.events || analysisResult.events.length === 0) {
-      console.warn(`[video-analyze] No events detected in analysis result. Creating fallback demo events...`);
-      
-      // Like professional apps, create fallback events if AI doesn't detect anything
-      const fallbackEvents = generateFallbackEvents(matchId, leftSideTeam);
-      console.log(`[video-analyze] Generated ${fallbackEvents.length} fallback events`);
-      
-      if (fallbackEvents.length > 0) {
-        console.log(`[video-analyze] Creating ${fallbackEvents.length} fallback events in database...`);
-        const createdEvents = await Promise.all(
-          fallbackEvents.map((eventData) =>
-            prisma.matchEvent.create({ data: eventData }).catch((err) => {
-              console.error(`[video-analyze] Failed to create fallback event:`, err);
-              return null;
-            })
-          )
-        ).then(results => results.filter(r => r !== null));
-        
-        console.log(`[video-analyze] Successfully created ${createdEvents.length} fallback events`);
-        
-        const homeShots = createdEvents.filter((e) => e.type === "shot" && e.team === "home").length;
-        const awayShots = createdEvents.filter((e) => e.type === "shot" && e.team === "away").length;
-        const homeXG = createdEvents
-          .filter((e) => e.type === "shot" && e.team === "home")
-          .reduce((sum, e) => sum + (e.xg || 0), 0);
-        const awayXG = createdEvents
-          .filter((e) => e.type === "shot" && e.team === "away")
-          .reduce((sum, e) => sum + (e.xg || 0), 0);
-        
-        await prisma.match.update({
-          where: { id: matchId },
-          data: {
-            shotsHome: homeShots,
-            shotsAway: awayShots,
-            xgHome: homeXG,
-            xgAway: awayXG,
-          },
-        });
-        
-        return NextResponse.json({
-          ok: true,
-          message: `AI didn't detect events, but created ${fallbackEvents.length} demo events for testing. You can add more events manually or improve video quality.`,
-          analysis: {
-            eventsDetected: createdEvents.length,
-            shots: { home: homeShots, away: awayShots },
-            xg: { home: homeXG, away: awayXG },
-            duration: analysisResult.duration,
-            totalFrames: analysisResult.totalFrames,
-            fallback: true,
-          },
-        });
-      }
-      
+      console.warn(`[video-analyze] No events detected in analysis result.`);
       return NextResponse.json({
         ok: true,
         message: "Video analyzed successfully, but no events were detected. The video may not contain clear football action or the AI model needs improvement.",
@@ -564,6 +533,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       };
     });
 
+    // Remove AI jitter duplicates / low quality detections before saving.
+    eventsToCreate = sanitizeEventsForStorage(eventsToCreate);
+    console.log(`[video-analyze] Sanitized events for storage: ${eventsToCreate.length}`);
+
     // Save events to database
     console.log(`[video-analyze] Creating ${eventsToCreate.length} events in database...`);
     const createdEvents = await Promise.all(
@@ -604,6 +577,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         shotsAway: awayShots,
         xgHome: homeXG,
         xgAway: awayXG,
+        ...(storedVideoPath ? { videoPath: storedVideoPath } : {}),
       },
     });
 
@@ -639,60 +613,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
   } catch (error) {
     console.error("[video-analyze] Error:", error);
-    
-    // Even if there's an error, try to create fallback events (like professional apps)
-    try {
-      console.log(`[video-analyze] Creating fallback events after error...`);
-      const fallbackEvents = generateFallbackEvents(matchId, leftSideTeam);
-      
-      if (fallbackEvents.length > 0) {
-        const createdEvents = await Promise.all(
-          fallbackEvents.map((eventData) =>
-            prisma.matchEvent.create({ data: eventData }).catch((e) => {
-              console.error(`[video-analyze] Failed to create event:`, e);
-              return null;
-            })
-          )
-        ).then(results => results.filter(r => r !== null));
-        
-        if (createdEvents.length > 0) {
-          const homeShots = createdEvents.filter((e) => e.type === "shot" && e.team === "home").length;
-          const awayShots = createdEvents.filter((e) => e.type === "shot" && e.team === "away").length;
-          const homeXG = createdEvents
-            .filter((e) => e.type === "shot" && e.team === "home")
-            .reduce((sum, e) => sum + (e.xg || 0), 0);
-          const awayXG = createdEvents
-            .filter((e) => e.type === "shot" && e.team === "away")
-            .reduce((sum, e) => sum + (e.xg || 0), 0);
-          
-          await prisma.match.update({
-            where: { id: matchId },
-            data: {
-              shotsHome: homeShots,
-              shotsAway: awayShots,
-              xgHome: homeXG,
-              xgAway: awayXG,
-            },
-          });
-          
-          return NextResponse.json({
-            ok: true,
-            message: `Analysis encountered an error, but created ${createdEvents.length} demo events for testing. Error: ${error instanceof Error ? error.message : "Unknown error"}`,
-            analysis: {
-              eventsDetected: createdEvents.length,
-              shots: { home: homeShots, away: awayShots },
-              xg: { home: homeXG, away: awayXG },
-              duration: 0,
-              totalFrames: 0,
-              fallback: true,
-            },
-          });
-        }
-      }
-    } catch (fallbackError) {
-      console.error("[video-analyze] Fallback also failed:", fallbackError);
-    }
-    
     return NextResponse.json(
       {
         ok: false,
@@ -719,157 +639,75 @@ export function generateFallbackEvents(matchId: number, leftSideTeam: string): A
   metadata?: string;
   xg?: number;
 }> {
-  const events = [];
-  
-  // Generate some demo shots for both teams
-  const homeTeam = leftSideTeam === "home" ? "home" : "away";
-  const awayTeam = leftSideTeam === "home" ? "away" : "home";
-  
-  // Home team shots (attacking from left, y < 50) - Better distribution for heatmaps
-  // y: 0-50 = home attacking half, 0 = home goal line
-  const homeShotPositions = [
-    { x: 45, y: 15 }, // Close range shot (near goal)
-    { x: 50, y: 25 }, // Medium range shot (center of box)
-    { x: 55, y: 20 }, // Medium range shot (slightly right)
-    { x: 40, y: 30 }, // Shot from left side
-    { x: 60, y: 35 }, // Shot from right side
-  ];
-  
-  for (let i = 0; i < homeShotPositions.length; i++) {
-    const pos = homeShotPositions[i];
-    const minute = 15 + i * 25; // Spread across match
-    
-    // Calculate xG
-    const xg = calculateXG({
-      x: pos.x,
-      y: pos.y,
-      shotType: "open_play",
-      bodyPart: "foot",
-    });
-    
-    events.push({
-      matchId,
-      type: "shot",
-      team: homeTeam,
-      x: pos.x,
-      y: pos.y,
-      minute,
-      metadata: JSON.stringify({
-        confidence: 0.7,
-        fallback: true,
-        note: "Demo event - AI analysis will improve in future updates",
-      }),
-      xg: Math.round(xg * 100) / 100,
-    });
+  // Disabled intentionally: do not create synthetic/demo events.
+  // If AI fails, callers should return 0 detected events instead of fake stats.
+  return [];
+}
+
+type StorableEvent = {
+  matchId: number;
+  type: string;
+  team: string;
+  playerId?: number | null;
+  x?: number | null;
+  y?: number | null;
+  minute?: number | null;
+  metadata?: string;
+  xg?: number;
+};
+
+function readConfidence(metadata?: string): number {
+  if (!metadata) return 0.5;
+  try {
+    const m = JSON.parse(metadata);
+    const c = Number(m?.confidence);
+    return Number.isFinite(c) ? c : 0.5;
+  } catch {
+    return 0.5;
   }
-  
-  // Away team shots (attacking from right, y > 50) - Better distribution
-  // y: 50-100 = away attacking half, 100 = away goal line
-  const awayShotPositions = [
-    { x: 55, y: 70 }, // Close range shot (near goal)
-    { x: 50, y: 75 }, // Medium range shot (center of box)
-    { x: 45, y: 80 }, // Shot from left side
-    { x: 60, y: 65 }, // Shot from right side
-    { x: 50, y: 85 }, // Shot from center, very close to goal
-  ];
-  
-  for (let i = 0; i < awayShotPositions.length; i++) {
-    const pos = awayShotPositions[i];
-    const minute = 20 + i * 30;
-    
-    const xg = calculateXG({
-      x: pos.x,
-      y: pos.y,
-      shotType: "open_play",
-      bodyPart: "foot",
-    });
-    
-    events.push({
-      matchId,
-      type: "shot",
-      team: awayTeam,
-      x: pos.x,
-      y: pos.y,
-      minute,
-      metadata: JSON.stringify({
-        confidence: 0.7,
-        fallback: true,
-        note: "Demo event - AI analysis will improve in future updates",
-      }),
-      xg: Math.round(xg * 100) / 100,
-    });
+}
+
+function sanitizeEventsForStorage(events: StorableEvent[]): StorableEvent[] {
+  if (!events.length) return events;
+
+  const dedupShots = new Map<string, StorableEvent>();
+  const nonShots: StorableEvent[] = [];
+
+  for (const ev of events) {
+    if (ev.type !== "shot") {
+      nonShots.push(ev);
+      continue;
+    }
+    if (ev.x == null || ev.y == null) continue;
+    const x = Number(ev.x);
+    const y = Number(ev.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+    const conf = readConfidence(ev.metadata);
+    if (conf < 0.45) continue;
+
+    const minuteBucket = Math.max(0, Math.floor(Number(ev.minute ?? 0)));
+    const cellX = Math.floor(Math.max(0, Math.min(99.999, x)) / 5); // 5x5 grid in 0..100 coords
+    const cellY = Math.floor(Math.max(0, Math.min(99.999, y)) / 5);
+    const key = `${ev.team}|${minuteBucket}|${cellX}|${cellY}`;
+
+    const existing = dedupShots.get(key);
+    if (!existing || readConfidence(existing.metadata) < conf) {
+      dedupShots.set(key, ev);
+    }
   }
-  
-  // Generate passes with good distribution for heatmaps
-  const passPositions = [
-    // Home team passes (left side, y < 50)
-    { x: 30, y: 20, team: homeTeam },
-    { x: 50, y: 30, team: homeTeam },
-    { x: 40, y: 15, team: homeTeam },
-    { x: 35, y: 25, team: homeTeam },
-    { x: 55, y: 35, team: homeTeam },
-    // Away team passes (right side, y > 50)
-    { x: 60, y: 65, team: awayTeam },
-    { x: 45, y: 70, team: awayTeam },
-    { x: 50, y: 75, team: awayTeam },
-    { x: 40, y: 80, team: awayTeam },
-    { x: 55, y: 60, team: awayTeam },
-  ];
-  
-  for (let i = 0; i < passPositions.length; i++) {
-    const pos = passPositions[i];
-    
-    events.push({
-      matchId,
-      type: "pass",
-      team: pos.team,
-      x: pos.x,
-      y: pos.y,
-      minute: Math.round(5 + i * 15),
-      metadata: JSON.stringify({
-        successful: Math.random() > 0.2, // 80% success rate
-        fallback: true,
-      }),
-    });
+
+  const keptShots = Array.from(dedupShots.values());
+  const byTeam = { home: [] as StorableEvent[], away: [] as StorableEvent[] };
+  for (const s of keptShots) {
+    if (s.team === "away") byTeam.away.push(s);
+    else byTeam.home.push(s);
   }
-  
-  // Generate touches for better heatmaps (more data points)
-  const touchPositions = [
-    // Home team touches (distributed across their half)
-    { x: 25, y: 25, team: homeTeam },
-    { x: 35, y: 30, team: homeTeam },
-    { x: 45, y: 20, team: homeTeam },
-    { x: 55, y: 35, team: homeTeam },
-    { x: 30, y: 15, team: homeTeam },
-    { x: 50, y: 25, team: homeTeam },
-    { x: 40, y: 10, team: homeTeam },
-    // Away team touches (distributed across their half)
-    { x: 65, y: 65, team: awayTeam },
-    { x: 55, y: 70, team: awayTeam },
-    { x: 45, y: 75, team: awayTeam },
-    { x: 50, y: 80, team: awayTeam },
-    { x: 60, y: 85, team: awayTeam },
-    { x: 40, y: 90, team: awayTeam },
-    { x: 35, y: 60, team: awayTeam },
-  ];
-  
-  for (let i = 0; i < touchPositions.length; i++) {
-    const pos = touchPositions[i];
-    
-    events.push({
-      matchId,
-      type: "touch",
-      team: pos.team,
-      x: pos.x,
-      y: pos.y,
-      minute: Math.round(10 + i * 10),
-      metadata: JSON.stringify({
-        fallback: true,
-      }),
-    });
-  }
-  
-  return events;
+  byTeam.home.sort((a, b) => readConfidence(b.metadata) - readConfidence(a.metadata));
+  byTeam.away.sort((a, b) => readConfidence(b.metadata) - readConfidence(a.metadata));
+
+  const cappedShots = [...byTeam.home.slice(0, 45), ...byTeam.away.slice(0, 45)];
+  return [...nonShots, ...cappedShots];
 }
 
 async function saveVideoFile(file: File, matchId: number): Promise<string | null> {
@@ -894,7 +732,7 @@ async function saveVideoFile(file: File, matchId: number): Promise<string | null
     }
 
     // Create uploads directory
-    const uploadsDir = join(process.cwd(), "uploads", "videos", `match-${matchId}`);
+    const uploadsDir = path.join(process.cwd(), "uploads", "videos", `match-${matchId}`);
     if (!existsSync(uploadsDir)) {
       await mkdir(uploadsDir, { recursive: true });
     }
@@ -903,7 +741,7 @@ async function saveVideoFile(file: File, matchId: number): Promise<string | null
     const timestamp = Date.now();
     const extension = file.name.split(".").pop() || "mp4";
     const filename = `video-${timestamp}.${extension}`;
-    const filepath = join(uploadsDir, filename);
+    const filepath = path.join(uploadsDir, filename);
 
     // Save file
     const bytes = await file.arrayBuffer();

@@ -2,9 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { randomUUID } from "crypto";
+import { MAX_MATCH_VIDEO_UPLOAD_BYTES } from "@/lib/video-upload-limits";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+async function resolveMatchId(idParam: string): Promise<number | null> {
+  // Treat as numeric id only when it's strictly digits (avoid parseInt("123-slug") pitfalls).
+  if (/^\d+$/.test(idParam)) {
+    return parseInt(idParam, 10);
+  }
+
+  const match = await prisma.match.findUnique({
+    where: { slug: idParam },
+    select: { id: true },
+  });
+  return match?.id ?? null;
+}
 
 /**
  * Initialize multipart upload
@@ -17,14 +31,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const { id } = await params;
-  const matchId = parseInt(id);
-
-  if (isNaN(matchId)) {
-    return NextResponse.json({ ok: false, message: "Invalid match ID" }, { status: 400 });
-  }
+  const matchId = await resolveMatchId(id);
 
   // Verify match exists
-  const match = await prisma.match.findUnique({ where: { id: matchId } });
+  const match = matchId ? await prisma.match.findUnique({ where: { id: matchId } }) : null;
   if (!match) {
     return NextResponse.json({ ok: false, message: "Match not found" }, { status: 404 });
   }
@@ -37,10 +47,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ ok: false, message: "Invalid file parameters" }, { status: 400 });
     }
 
-    // Validate file size (max 2GB)
-    const maxSize = 2 * 1024 * 1024 * 1024; // 2GB
-    if (fileSize > maxSize) {
-      return NextResponse.json({ ok: false, message: "File size exceeds 2GB limit" }, { status: 400 });
+    if (fileSize > MAX_MATCH_VIDEO_UPLOAD_BYTES) {
+      const gb = MAX_MATCH_VIDEO_UPLOAD_BYTES / (1024 * 1024 * 1024);
+      return NextResponse.json(
+        { ok: false, message: `File size exceeds ${gb}GB limit` },
+        { status: 400 }
+      );
     }
 
     // Generate upload ID

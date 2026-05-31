@@ -11,6 +11,7 @@ export type ShotEvent = {
   playerId: string;
   playerName: string;
   teamId: string;
+  team?: "home" | "away";
   timeSec: number;
   x: number; // 0-1 normalized
   y: number; // 0-1 normalized
@@ -272,7 +273,13 @@ export function ShotAnalytics({ shots, homeTeamName, awayTeamName, homeTeamId, a
               </div>
               Heatmap Γηπέδου
             </h4>
-            <ShotHeatmap shots={filteredShots} homeTeamName={homeTeamName} awayTeamName={awayTeamName} />
+            <ShotHeatmap
+              shots={filteredShots}
+              homeTeamName={homeTeamName}
+              awayTeamName={awayTeamName}
+              homeTeamId={homeTeamId}
+              awayTeamId={awayTeamId}
+            />
           </div>
         </div>
 

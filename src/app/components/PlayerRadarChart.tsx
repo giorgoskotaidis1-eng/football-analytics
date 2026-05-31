@@ -22,9 +22,10 @@ interface PlayerRadarChartProps {
       efficiency: number;
     };
   }>;
+  mode?: "all" | "attacking" | "passing";
 }
 
-export function PlayerRadarChart({ players }: PlayerRadarChartProps) {
+export function PlayerRadarChart({ players, mode = "all" }: PlayerRadarChartProps) {
   // Need at least 2 players for comparison
   if (players.length < 2) {
     return (
@@ -34,52 +35,83 @@ export function PlayerRadarChart({ players }: PlayerRadarChartProps) {
     );
   }
 
+  const axesByMode: Record<"all" | "attacking" | "passing", Array<{ label: string; key: keyof PlayerRadarChartProps["players"][number]["radarMetrics"] }>> = {
+    all: [
+      { label: "Shooting", key: "shooting" },
+      { label: "Creativity", key: "creativity" },
+      { label: "Passing", key: "passing" },
+      { label: "Involvement", key: "involvement" },
+      { label: "Efficiency", key: "efficiency" },
+    ],
+    attacking: [
+      { label: "Shooting", key: "shooting" },
+      { label: "Creativity", key: "creativity" },
+      { label: "Efficiency", key: "efficiency" },
+    ],
+    passing: [
+      { label: "Passing", key: "passing" },
+      { label: "Creativity", key: "creativity" },
+      { label: "Involvement", key: "involvement" },
+    ],
+  };
+  const selectedAxes = axesByMode[mode];
+
   // Prepare data for radar chart
-  const radarData: PlayerRadarData[] = [
-    {
-      name: "Shooting",
-      ...players.reduce((acc, player, idx) => {
-        acc[`player${idx}`] = player.radarMetrics.shooting;
-        return acc;
-      }, {} as Record<string, number>),
-    },
-    {
-      name: "Creativity",
-      ...players.reduce((acc, player, idx) => {
-        acc[`player${idx}`] = player.radarMetrics.creativity;
-        return acc;
-      }, {} as Record<string, number>),
-    },
-    {
-      name: "Passing",
-      ...players.reduce((acc, player, idx) => {
-        acc[`player${idx}`] = player.radarMetrics.passing;
-        return acc;
-      }, {} as Record<string, number>),
-    },
-    {
-      name: "Involvement",
-      ...players.reduce((acc, player, idx) => {
-        acc[`player${idx}`] = player.radarMetrics.involvement;
-        return acc;
-      }, {} as Record<string, number>),
-    },
-    {
-      name: "Efficiency",
-      ...players.reduce((acc, player, idx) => {
-        acc[`player${idx}`] = player.radarMetrics.efficiency;
-        return acc;
-      }, {} as Record<string, number>),
-    },
-  ];
+  const radarData: PlayerRadarData[] = selectedAxes.map((axis) => ({
+    name: axis.label,
+    ...players.reduce((acc, player, idx) => {
+      acc[`player${idx}`] = player.radarMetrics[axis.key];
+      return acc;
+    }, {} as Record<string, number>),
+  }));
+
+  const metricKeys = players.map((_, idx) => `player${idx}`);
+  const maxMetricValue = Math.max(
+    0,
+    ...radarData.flatMap((axis) =>
+      metricKeys.map((key) => {
+        const value = (axis as Record<string, number | string>)[key];
+        return typeof value === "number" && Number.isFinite(value) ? value : 0;
+      })
+    )
+  );
+  const radarDomainMax =
+    maxMetricValue <= 5
+      ? 5
+      : maxMetricValue <= 10
+      ? 10
+      : maxMetricValue <= 20
+      ? 20
+      : maxMetricValue <= 40
+      ? 40
+      : maxMetricValue <= 60
+      ? 60
+      : maxMetricValue <= 80
+      ? 80
+      : 100;
 
   const colors = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6"];
+  const dashPatterns = ["0", "6 4", "3 3", "10 4", "2 2"];
+  const fillOpacities = [0.22, 0.16, 0.12, 0.1, 0.08];
+  const seriesVisibility = players.map((player, idx) => ({
+    name: player.name,
+    dataKey: `player${idx}`,
+    color: colors[idx % colors.length],
+    hasAnyNonZero: Object.values(player.radarMetrics).some((v) => v > 0),
+    allZero: Object.values(player.radarMetrics).every((v) => v === 0),
+  }));
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950 p-6">
       <div className="mb-6">
         <h3 className="text-base font-semibold text-slate-100 mb-1">Performance Radar Comparison</h3>
-        <p className="text-[11px] text-slate-400">Multi-dimensional player analysis</p>
+        <p className="text-[11px] text-slate-400">
+          {mode === "attacking"
+            ? "Attacking profile"
+            : mode === "passing"
+            ? "Passing profile"
+            : "Multi-dimensional player analysis"}
+        </p>
       </div>
       <ResponsiveContainer width="100%" height={400}>
         <RadarChart data={radarData} margin={{ top: 20, right: 30, bottom: 20, left: 30 }}>
@@ -99,12 +131,12 @@ export function PlayerRadarChart({ players }: PlayerRadarChartProps) {
           />
           <PolarRadiusAxis
             angle={90}
-            domain={[0, 100]}
+            domain={[0, radarDomainMax]}
             tick={{ 
               fill: "#64748b", 
               fontSize: 10
             }}
-            tickCount={5}
+            tickCount={6}
           />
           {players.map((player, idx) => (
             <Radar
@@ -113,8 +145,9 @@ export function PlayerRadarChart({ players }: PlayerRadarChartProps) {
               dataKey={`player${idx}`}
               stroke={colors[idx % colors.length]}
               fill={colors[idx % colors.length]}
-              fillOpacity={0.2}
-              strokeWidth={2}
+              fillOpacity={fillOpacities[idx % fillOpacities.length]}
+              strokeWidth={2.4}
+              strokeDasharray={dashPatterns[idx % dashPatterns.length]}
               dot={{ fill: colors[idx % colors.length], r: 3, strokeWidth: 1.5, stroke: "#fff" }}
             />
           ))}
@@ -141,27 +174,23 @@ export function PlayerRadarChart({ players }: PlayerRadarChartProps) {
           />
         </RadarChart>
       </ResponsiveContainer>
-      <div className="mt-4 grid grid-cols-2 gap-2 text-[10px] md:grid-cols-5 border-t border-slate-800 pt-4">
-        <div className="text-center">
-          <p className="font-medium text-slate-300 mb-0.5">Shooting</p>
-          <p className="text-slate-500 text-[9px]">Goals per 90</p>
-        </div>
-        <div className="text-center">
-          <p className="font-medium text-slate-300 mb-0.5">Creativity</p>
-          <p className="text-slate-500 text-[9px]">Assists per 90</p>
-        </div>
-        <div className="text-center">
-          <p className="font-medium text-slate-300 mb-0.5">Passing</p>
-          <p className="text-slate-500 text-[9px]">Pass accuracy %</p>
-        </div>
-        <div className="text-center">
-          <p className="font-medium text-slate-300 mb-0.5">Involvement</p>
-          <p className="text-slate-500 text-[9px]">Touches per 90</p>
-        </div>
-        <div className="text-center">
-          <p className="font-medium text-slate-300 mb-0.5">Efficiency</p>
-          <p className="text-slate-500 text-[9px]">Shot conversion</p>
-        </div>
+      <div className={`mt-4 grid gap-2 text-[10px] border-t border-slate-800 pt-4 ${mode === "all" ? "grid-cols-2 md:grid-cols-5" : "grid-cols-3"}`}>
+        {selectedAxes.map((axis) => (
+          <div key={axis.key} className="text-center">
+            <p className="font-medium text-slate-300 mb-0.5">{axis.label}</p>
+            <p className="text-slate-500 text-[9px]">
+              {axis.key === "shooting"
+                ? "Shots/xG/goals blend"
+                : axis.key === "creativity"
+                ? "xA/assists blend"
+                : axis.key === "passing"
+                ? "Volume + accuracy"
+                : axis.key === "involvement"
+                ? "Touches per 90"
+                : "On-target/conversion"}
+            </p>
+          </div>
+        ))}
       </div>
     </div>
   );

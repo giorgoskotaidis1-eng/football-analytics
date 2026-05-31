@@ -12,6 +12,7 @@ export interface UploadPart {
   partNumber: number;
   start: number;
   end: number;
+  uploadUrl?: string;
   etag?: string;
   uploaded: boolean;
 }
@@ -104,6 +105,11 @@ export async function retryWithBackoff<T>(
       return await fn();
     } catch (error) {
       lastError = error as Error;
+
+      // Fail fast for non-retriable errors (e.g. 4xx validation/not-found).
+      if ((error as any)?.nonRetryable) {
+        throw lastError;
+      }
       
       if (attempt < maxRetries) {
         const delay = baseDelay * Math.pow(2, attempt);

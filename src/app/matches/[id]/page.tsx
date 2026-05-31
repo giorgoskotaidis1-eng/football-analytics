@@ -26,6 +26,7 @@ const MatchDynamics = dynamic(() => import("@/app/components/analytics/MatchDyna
 const AnalysisNotes = dynamic(() => import("@/app/components/AnalysisNotes").then(m => ({ default: m.AnalysisNotes })), { ssr: false });
 const KPICards = dynamic(() => import("@/app/components/KPICards").then(m => ({ default: m.KPICards })), { ssr: false });
 const MatchSummary = dynamic(() => import("@/app/components/MatchSummary").then(m => ({ default: m.MatchSummary })), { ssr: false });
+const PlayersAnalysis = dynamic(() => import("@/app/components/analytics/PlayersAnalysis").then(m => ({ default: m.PlayersAnalysis })), { ssr: false });
 
 
 type TabKey =
@@ -39,7 +40,8 @@ type TabKey =
   | "vector"
   | "spotlight"
   | "dynamics"
-  | "shot-analytics";
+  | "shot-analytics"
+  | "players-analysis";
 
 type Match = {
   id: number;
@@ -85,7 +87,7 @@ export default function MatchDetailPage() {
     if (typeof window === "undefined") return "summary";
     try {
       const stored = localStorage.getItem(`match_${id}_activeTab`);
-      if (stored && ["summary", "lineup", "leaderboards", "network", "matrix", "distribution", "activity", "vector", "spotlight", "dynamics", "shot-analytics"].includes(stored)) {
+      if (stored && ["summary", "lineup", "leaderboards", "network", "matrix", "distribution", "activity", "vector", "spotlight", "dynamics", "shot-analytics", "players-analysis"].includes(stored)) {
         return stored as TabKey;
       }
     } catch (e) {
@@ -160,6 +162,8 @@ export default function MatchDetailPage() {
     xg?: number;
   }> | null>(null);
   const [showHighlightsModal, setShowHighlightsModal] = useState(false);
+  const [starterPlayerIds, setStarterPlayerIds] = useState<number[]>([]);
+  const [spotlightJumpMinute, setSpotlightJumpMinute] = useState<number | null>(null);
 
   // Fetch critical data first, then load non-critical data
   useEffect(() => {
@@ -167,6 +171,7 @@ export default function MatchDetailPage() {
     
     async function fetchCriticalData() {
       try {
+        let fetchedMatch: any = null;
         // First, fetch only critical data: match and events
         const [matchRes, eventsRes] = await Promise.allSettled([
           fetch(`/api/matches/${id}`),
@@ -177,6 +182,7 @@ export default function MatchDetailPage() {
         if (matchRes.status === "fulfilled" && matchRes.value.ok) {
           const matchData = await matchRes.value.json();
           if (matchData.ok) {
+            fetchedMatch = matchData.match;
             setMatch(matchData.match);
           } else {
             notFound();
@@ -245,6 +251,25 @@ export default function MatchDetailPage() {
 
         // Analytics will be loaded when needed (see useEffect below)
         setAnalyticsLoading(false);
+
+        // Fetch lineups to identify starters (home + away)
+        if (fetchedMatch?.id) {
+            const teamIds = [fetchedMatch.homeTeamId, fetchedMatch.awayTeamId].filter(Boolean);
+            const lineupResponses = await Promise.allSettled(
+              teamIds.map((teamId: number) => fetch(`/api/matches/${fetchedMatch.id}/lineup?teamId=${teamId}`)),
+            );
+            const starterIds: number[] = [];
+            for (const lr of lineupResponses) {
+              if (lr.status !== "fulfilled" || !lr.value.ok) continue;
+              const data = await lr.value.json().catch(() => null);
+              if (data?.ok && Array.isArray(data.lineup)) {
+                for (const slot of data.lineup) {
+                  if (slot?.playerId) starterIds.push(Number(slot.playerId));
+                }
+              }
+            }
+            setStarterPlayerIds(Array.from(new Set(starterIds)));
+        }
       } catch (error) {
         console.error("[MatchDetail] Error fetching data:", error);
         notFound();
@@ -385,16 +410,17 @@ export default function MatchDetailPage() {
                         let playerName = "Unknown";
                         if (shot.player?.name) {
                           playerName = shot.player.name;
-                        } else if (shot.playerId) {
+                        } else if ((shot as any).playerId) {
                           // If we have a playerId but no player relation, it might be a tracking ID
                           // Try to get player from database
-                          playerName = `Player #${shot.playerId}`;
+                          playerName = `Player #${(shot as any).playerId}`;
                         }
 
                         return {
-                          playerId: String(shot.player?.id || shot.playerId || shot.id || ""),
+                          playerId: String(shot.player?.id || (shot as any).playerId || shot.id || ""),
                           playerName,
                           teamId,
+                          team: (shot.team === "away" ? "away" : "home") as "home" | "away",
                           timeSec: (shot.minute || 0) * 60,
                           x: Math.max(0, Math.min(1, x / 100)), // Convert 0-100 to 0-1
                           y: Math.max(0, Math.min(1, y / 100)),
@@ -487,28 +513,54 @@ export default function MatchDetailPage() {
   async function handleDownloadReport() {
     if (!match?.id) return;
     setDownloadingReport(true);
+    let absoluteUrl = "";
     try {
-      const res = await fetch(`/api/matches/${match.id}/report`);
-      const data = await res.json();
+      const fetchReport = () =>
+        fetch(`/api/matches/${match.id}/report`, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          headers: {
+            "Accept": "application/json",
+          },
+        });
+
+      let res = await fetchReport();
+      // Retry once after touching session endpoint if auth is temporarily stale.
+      if (res.status === 401) {
+        await fetch("/api/account/me", {
+          credentials: "include",
+          cache: "no-store",
+        }).catch(() => {});
+        res = await fetchReport();
+      }
+
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok && data.downloadUrl) {
-        // Ensure absolute URL for window.open
-        const absoluteUrl = data.downloadUrl.startsWith("http") 
+        // Build absolute URL to report HTML and open a print-friendly view.
+        absoluteUrl = data.downloadUrl.startsWith("http")
           ? data.downloadUrl 
           : `${window.location.origin}${data.downloadUrl}`;
-        
-        // Open report in new tab
-        const newWindow = window.open(absoluteUrl, "_blank");
-        if (!newWindow) {
-          toast.error("Popup blocked. Please allow popups for this site.");
-        } else {
-          toast.success("Match report generated! Opening in new tab...");
+        const printableUrl = `${absoluteUrl}${absoluteUrl.includes("?") ? "&" : "?"}print=1&autoprint=1`;
+        const popup = window.open(printableUrl, "_blank");
+        if (!popup) {
+          toast.error("Popup blocked. Allow popups to print/save PDF.");
+          return;
         }
+        toast.success("Opened print view. Choose 'Save as PDF'.");
       } else {
-        toast.error(data.message || "Failed to generate report");
+        if (res.status === 401) {
+          toast.error("Session expired. Please login again and retry.");
+        } else {
+          toast.error(data.message || "Failed to generate report");
+        }
       }
     } catch (error) {
       console.error("Download report error:", error);
-      toast.error("Network error. Please try again.");
+      toast.error("Report generation failed.");
+      if (absoluteUrl) {
+        window.open(absoluteUrl, "_blank");
+      }
     } finally {
       setDownloadingReport(false);
     }
@@ -636,6 +688,7 @@ export default function MatchDetailPage() {
               { key: "spotlight" as TabKey, label: "Spotlight" },
               { key: "dynamics" as TabKey, label: "Match Dynamics" },
               { key: "shot-analytics" as TabKey, label: "Shot Analytics" },
+              { key: "players-analysis" as TabKey, label: "Players Analysis" },
             ].map((tab) => (
               <button
                 key={tab.key}
@@ -661,11 +714,18 @@ export default function MatchDetailPage() {
                   <>
                     <VideoUpload
                       matchId={match.id}
+                      matchRouteId={id}
                       homeTeamId={match.homeTeamId}
                       awayTeamId={match.awayTeamId}
                       homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
                       awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
                       onAnalysisComplete={() => {
+                        fetch(`/api/matches/${encodeURIComponent(String(id))}`)
+                          .then((r) => r.json())
+                          .then((d) => {
+                            if (d.ok && d.match) setMatch(d.match);
+                          })
+                          .catch(() => {});
                         fetch(`/api/matches/${match.id}/events`)
                           .then((r) => r.json())
                           .then((d) => {
@@ -1020,6 +1080,33 @@ export default function MatchDetailPage() {
             </section>
           )}
 
+          {activeTab === "players-analysis" && (
+            <section className="space-y-4 rounded-xl border border-slate-800 bg-slate-950 p-4 text-[11px] text-slate-300">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">Players Analysis</p>
+                  <p className="text-[10px] text-slate-500">Στατιστικά παικτών που προκύπτουν αποκλειστικά από το συγκεκριμένο match</p>
+                </div>
+              </div>
+              <Suspense fallback={<div className="h-96 animate-pulse bg-slate-900 rounded" />}>
+                <PlayersAnalysis
+                  events={events}
+                  players={players}
+                  homeTeamId={match.homeTeamId}
+                  awayTeamId={match.awayTeamId}
+                  homeTeamName={getTeamName(match.homeTeam, match.homeTeamName)}
+                  awayTeamName={getTeamName(match.awayTeam, match.awayTeamName)}
+                  starterPlayerIds={starterPlayerIds}
+                  canJumpToVideo={Boolean(match.videoPath)}
+                  onJumpToVideoMinute={(minute) => {
+                    setSpotlightJumpMinute(minute);
+                    setActiveTab("spotlight");
+                  }}
+                />
+              </Suspense>
+            </section>
+          )}
+
           {activeTab === "spotlight" && (
             <section className="space-y-4 rounded-xl border border-slate-800 bg-slate-950 p-4 text-[11px] text-slate-300">
               <div className="flex items-center justify-between">
@@ -1046,18 +1133,19 @@ export default function MatchDetailPage() {
                       return match.videoPath;
                     }
                     // Convert absolute or relative path to relative format (videos/match-X/file.mp4)
-                    let relPath = match.videoPath;
+                    let relPath = match.videoPath.replace(/\\/g, "/");
                     // If absolute path, extract relative part
-                    if (relPath.match(/^[A-Za-z]:\\/) || relPath.startsWith('/')) {
-                      // Extract videos/match-X/... part
+                    if (relPath.match(/^[A-Za-z]:/) || relPath.startsWith('/')) {
                       const matchPath = relPath.match(/uploads[\/\\]videos[\/\\]match-\d+[\/\\](.+)$/i);
                       if (matchPath) {
                         relPath = `videos/match-${match.id}/${matchPath[1]}`;
                       } else {
-                        // Try to get relative from process.cwd()
                         const uploadsIndex = relPath.indexOf('uploads');
                         if (uploadsIndex !== -1) {
                           relPath = relPath.substring(uploadsIndex + 8).replace(/\\/g, '/');
+                        } else {
+                          // Custom drive / absolute path outside project: API whitelists against match.videoPath
+                          return `/api/matches/${match.id}/video?path=${encodeURIComponent(match.videoPath!.replace(/\\/g, '/'))}`;
                         }
                       }
                     } else {
@@ -1068,6 +1156,7 @@ export default function MatchDetailPage() {
                   })() : null}
                   homeTeamId={match.homeTeamId}
                   awayTeamId={match.awayTeamId}
+                  initialMinute={spotlightJumpMinute ?? undefined}
                 />
               </Suspense>
             </section>

@@ -88,3 +88,13 @@ prisma/migrations/
 *.swp
 *.swo
 *~
+
+# Build / local tooling (not source)
+tsconfig.tsbuildinfo
+build-log.txt
+cloudflared.exe
+*.exe
+
+# Generated exports and reports
+public/exports/
+public/reports/match-report-*.html

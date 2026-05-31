@@ -10,6 +10,17 @@ export const dynamic = "force-dynamic";
 // Chunk size for range requests (4MB)
 const CHUNK_SIZE = 4 * 1024 * 1024;
 
+async function resolveMatchId(idParam: string): Promise<number | null> {
+  if (/^\d+$/.test(idParam)) {
+    return parseInt(idParam, 10);
+  }
+  const match = await prisma.match.findUnique({
+    where: { slug: idParam },
+    select: { id: true },
+  });
+  return match?.id ?? null;
+}
+
 /**
  * Handle OPTIONS for CORS preflight
  */
@@ -42,9 +53,8 @@ export async function GET(
   }
 
   const { id } = await params;
-  const matchId = parseInt(id);
-
-  if (isNaN(matchId)) {
+  const matchId = await resolveMatchId(id);
+  if (!matchId) {
     return NextResponse.json({ ok: false, message: "Invalid match ID" }, { status: 400 });
   }
 
@@ -60,40 +70,70 @@ export async function GET(
     const relPath = req.nextUrl.searchParams.get("path");
     console.log(`[video] Request: matchId=${matchId}, path=${relPath}`);
 
-    if (!relPath) {
-      console.error("[video] Missing path parameter");
+    const baseDir = path.resolve(process.cwd(), "uploads");
+    const storedVideo = match.videoPath?.trim();
+
+    // Decode URL-encoded path (or fall back to match.videoPath when query omitted — same-origin player often has DB path)
+    let decodedPath: string;
+    if (relPath) {
+      decodedPath = decodeURIComponent(relPath).trim();
+    } else if (storedVideo && !/^https?:\/\//i.test(storedVideo)) {
+      decodedPath = storedVideo.replace(/\//g, path.sep);
+      console.log(`[video] No path query — using match.videoPath`);
+    } else {
+      console.error("[video] Missing path parameter and no usable match.videoPath");
       return new Response("Missing path parameter", { status: 400 });
     }
 
-    // Decode URL-encoded path
-    const decodedPath = decodeURIComponent(relPath);
-    
-    // Handle absolute paths (backward compatibility) - convert to relative
-    let finalRelPath = decodedPath;
-    if (decodedPath.match(/^[A-Za-z]:\\/) || decodedPath.startsWith("/")) {
-      // Absolute path - extract relative part
-      const uploadsDir = path.join(process.cwd(), "uploads");
-      if (decodedPath.startsWith(uploadsDir)) {
-        finalRelPath = path.relative(uploadsDir, decodedPath).replace(/\\/g, "/");
-      } else {
-        // Try to extract videos/match-X/... part
-        const match = decodedPath.match(/uploads[\/\\]videos[\/\\]match-\d+[\/\\](.+)$/i);
-        if (match) {
-          finalRelPath = `videos/match-${matchId}/${match[1]}`;
-        } else {
-          return new Response("Invalid path format", { status: 400 });
+    /** Exact file on disk when request path matches the match's stored videoPath (e.g. custom storage drive). */
+    let full: string | undefined;
+    if (storedVideo && !/^https?:\/\//i.test(storedVideo)) {
+      try {
+        const resolvedStored = path.resolve(storedVideo);
+        const resolvedDecoded = path.resolve(decodedPath);
+        if (resolvedStored === resolvedDecoded && fs.existsSync(resolvedStored)) {
+          full = resolvedStored;
+          console.log(`[video] Serving whitelisted match.videoPath: ${full}`);
         }
+      } catch (e) {
+        console.warn("[video] Stored path resolve:", e);
       }
     }
 
-    // Base directory for uploads
-    const baseDir = path.join(process.cwd(), "uploads");
-    const full = path.normalize(path.join(baseDir, finalRelPath));
+    if (!full) {
+      // Resolve anything like C:/... or C:\... or /abs/... via path.resolve (fixes Windows + forward slashes from encodeURI)
+      const uploadsDir = baseDir;
+      let finalRelPath = decodedPath.replace(/^\/+/, "");
 
-    // Security: ensure path is within baseDir (prevent path traversal)
-    if (!full.startsWith(baseDir)) {
-      console.error(`[video] Path traversal attempt: ${full}`);
-      return new Response("Invalid path", { status: 400 });
+      const looksAbsolute =
+        path.isAbsolute(decodedPath) || /^[A-Za-z]:[\\/]/.test(decodedPath.trim());
+
+      if (looksAbsolute) {
+        const resolvedInput = path.resolve(decodedPath);
+        const relFromUploads = path.relative(uploadsDir, resolvedInput);
+        if (!relFromUploads.startsWith("..") && !path.isAbsolute(relFromUploads)) {
+          finalRelPath = relFromUploads.replace(/\\/g, "/");
+        } else {
+          const pathMatch = decodedPath.match(/uploads[\/\\]videos[\/\\]match-\d+[\/\\](.+)$/i);
+          if (pathMatch) {
+            finalRelPath = `videos/match-${matchId}/${pathMatch[1]}`;
+          } else {
+            console.error(`[video] Cannot map absolute path under uploads: decoded=${decodedPath}`);
+            return new Response("Invalid path format", { status: 400 });
+          }
+        }
+      }
+
+      // Client may send "videos/..." or wrongly "uploads/videos/..." — strip leading uploads/ once
+      const underUploads = finalRelPath.replace(/^uploads[\\/]/i, "").replace(/\\/g, "/");
+
+      const candidate = path.resolve(path.join(baseDir, underUploads));
+      const relativeToBase = path.relative(baseDir, candidate);
+      if (relativeToBase.startsWith("..") || path.isAbsolute(relativeToBase)) {
+        console.error(`[video] Path traversal attempt: base=${baseDir} full=${candidate}`);
+        return new Response("Invalid path", { status: 400 });
+      }
+      full = candidate;
     }
 
     if (!fs.existsSync(full)) {
@@ -145,12 +185,16 @@ export async function GET(
         });
       }
 
-      // Calculate end: if not specified, use CHUNK_SIZE; otherwise use specified end
-      const end = endStr
+      // Calculate end: if not specified, use CHUNK_SIZE; otherwise use specified end (clamp to file — browsers sometimes overshoot)
+      let end = endStr
         ? parseInt(endStr, 10)
         : Math.min(start + CHUNK_SIZE - 1, fileSize - 1);
+      if (isNaN(end)) {
+        end = Math.min(start + CHUNK_SIZE - 1, fileSize - 1);
+      }
+      end = Math.min(end, fileSize - 1);
 
-      if (isNaN(end) || start > end || end >= fileSize) {
+      if (isNaN(end) || start > end || start >= fileSize) {
         console.error(`[video] Invalid range end: ${endStr}, start=${start}, end=${end}, fileSize=${fileSize}`);
         return new Response("Invalid range", {
           status: 416,

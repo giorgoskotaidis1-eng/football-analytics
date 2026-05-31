@@ -9,6 +9,18 @@ import { existsSync } from "fs";
 export const runtime = "nodejs";
 export const maxDuration = 300; // 5 minutes to assemble
 
+async function resolveMatchId(idParam: string): Promise<number | null> {
+  if (/^\d+$/.test(idParam)) {
+    return parseInt(idParam, 10);
+  }
+
+  const match = await prisma.match.findUnique({
+    where: { slug: idParam },
+    select: { id: true },
+  });
+  return match?.id ?? null;
+}
+
 /**
  * Complete multipart upload
  * Assembles all parts into final file without buffering entire file in memory
@@ -20,14 +32,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const { id } = await params;
-  const matchId = parseInt(id);
-
-  if (isNaN(matchId)) {
-    return NextResponse.json({ ok: false, message: "Invalid match ID" }, { status: 400 });
-  }
+  const matchId = await resolveMatchId(id);
 
   // Verify match exists
-  const match = await prisma.match.findUnique({ where: { id: matchId } });
+  const match = matchId ? await prisma.match.findUnique({ where: { id: matchId } }) : null;
   if (!match) {
     return NextResponse.json({ ok: false, message: "Match not found" }, { status: 404 });
   }
@@ -56,10 +64,60 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ ok: false, message: "Upload not found" }, { status: 404 });
     }
 
-    // Sort parts by part number
-    const sortedParts = parts
-      .map((p: any) => ({ partNumber: parseInt(p.partNumber), etag: p.etag }))
-      .sort((a: any, b: any) => a.partNumber - b.partNumber);
+    // Validate client part list and enforce full integrity from disk.
+    const parsedPartNumbers = parts
+      .map((p: any) => parseInt(p?.partNumber, 10))
+      .filter((n: number) => Number.isInteger(n) && n > 0);
+    const uniqueRequestedPartNumbers = Array.from(new Set(parsedPartNumbers)).sort((a, b) => a - b);
+    if (uniqueRequestedPartNumbers.length === 0) {
+      return NextResponse.json({ ok: false, message: "No valid parts provided" }, { status: 400 });
+    }
+
+    // Ground truth from disk: only assemble if every uploaded part is declared and contiguous.
+    const diskFiles = await readdir(partsDir);
+    const uploadedPartNumbers = diskFiles
+      .filter((f) => f.startsWith("part-"))
+      .map((f) => parseInt(f.replace("part-", ""), 10))
+      .filter((n) => Number.isInteger(n) && n > 0)
+      .sort((a, b) => a - b);
+
+    if (uploadedPartNumbers.length === 0) {
+      return NextResponse.json({ ok: false, message: "No uploaded parts found" }, { status: 400 });
+    }
+
+    const expectedContiguous = Array.from(
+      { length: uploadedPartNumbers[uploadedPartNumbers.length - 1] },
+      (_, i) => i + 1
+    );
+    const contiguousOk =
+      uploadedPartNumbers.length === expectedContiguous.length &&
+      uploadedPartNumbers.every((n, i) => n === expectedContiguous[i]);
+    if (!contiguousOk) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Upload is incomplete or corrupted (missing part numbers). Please resume upload and retry.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const requestMatchesDisk =
+      uniqueRequestedPartNumbers.length === uploadedPartNumbers.length &&
+      uniqueRequestedPartNumbers.every((n, i) => n === uploadedPartNumbers[i]);
+    if (!requestMatchesDisk) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Part manifest mismatch. Please refresh and retry upload completion.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const sortedParts = uniqueRequestedPartNumbers.map((partNumber) => ({ partNumber }));
 
     // Create final video directory
     const videosDir = baseDir;
@@ -138,12 +196,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // Update match with video path (if videoPath field exists in schema)
     // Note: If videoPath doesn't exist in schema, you may need to add it or store in metadata
     try {
+      const pathForDb = relativePath.replace(/\\/g, "/");
       await prisma.match.update({
         where: { id: matchId },
-        data: {
-          // If videoPath field exists in Match model, uncomment:
-          // videoPath: relativePath,
-        },
+        data: { videoPath: pathForDb },
       });
     } catch (updateError) {
       console.warn("[upload-complete] Could not update match videoPath:", updateError);

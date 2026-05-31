@@ -147,24 +147,16 @@ export default function MatchesPage() {
         try {
           const storedHome = localStorage.getItem("matchForm_homeTeamMode");
           const storedAway = localStorage.getItem("matchForm_awayTeamMode");
-          
-          console.log("[Matches] 🔄 Modal opened, loading from localStorage...", { storedHome, storedAway });
-          
+
           if (storedHome === "registered" || storedHome === "opponent") {
             setHomeTeamMode(storedHome);
-            console.log("[Matches] ✅ Set homeTeamMode to:", storedHome);
-          } else {
-            console.log("[Matches] ⚠️ No valid homeTeamMode in localStorage, using default: registered");
           }
-          
+
           if (storedAway === "registered" || storedAway === "opponent") {
             setAwayTeamMode(storedAway);
-            console.log("[Matches] ✅ Set awayTeamMode to:", storedAway);
-          } else {
-            console.log("[Matches] ⚠️ No valid awayTeamMode in localStorage, using default: opponent");
           }
         } catch (e) {
-          console.error("[Matches] ❌ Failed to load from localStorage:", e);
+          console.error("[Matches] Failed to load from localStorage:", e);
         }
       };
       
@@ -180,18 +172,16 @@ export default function MatchesPage() {
   useEffect(() => {
     try {
       localStorage.setItem("matchForm_homeTeamMode", homeTeamMode);
-      console.log("[Matches] 💾 Saved homeTeamMode to localStorage:", homeTeamMode);
     } catch (e) {
-      console.warn("[Matches] ❌ Failed to save homeTeamMode:", e);
+      console.warn("[Matches] Failed to save homeTeamMode:", e);
     }
   }, [homeTeamMode]);
 
   useEffect(() => {
     try {
       localStorage.setItem("matchForm_awayTeamMode", awayTeamMode);
-      console.log("[Matches] 💾 Saved awayTeamMode to localStorage:", awayTeamMode);
     } catch (e) {
-      console.warn("[Matches] ❌ Failed to save awayTeamMode:", e);
+      console.warn("[Matches] Failed to save awayTeamMode:", e);
     }
   }, [awayTeamMode]);
 
@@ -344,29 +334,23 @@ export default function MatchesPage() {
         requestBody.awayTeamName = data.awayTeamName.trim();
       }
 
-      console.log("[Matches] 📤 Sending request:", requestBody);
-
       const res = await fetch("/api/matches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
       });
 
-      console.log("[Matches] 📥 Response status:", res.status);
-
       let result;
       try {
         result = await res.json();
-        console.log("[Matches] 📥 Response data:", result);
       } catch (parseError) {
-        console.error("[Matches] ❌ Failed to parse response:", parseError);
+        console.error("[Matches] Failed to parse response:", parseError);
         toast.error("Invalid response from server. Please try again.");
         return;
       }
 
       if (!res.ok || !result.ok) {
         const errorMessage = result.message || `Failed to create match (Status: ${res.status})`;
-        console.error("[Matches] ❌ Error:", errorMessage);
         toast.error(errorMessage);
         return;
       }
@@ -695,7 +679,9 @@ export default function MatchesPage() {
                         <td className="px-6 py-4 text-center">
                           <div className="relative">
                             <button
-                              ref={(el) => (buttonRefs.current[m.id] = el)}
+                              ref={(el) => {
+                                buttonRefs.current[m.id] = el;
+                              }}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 const button = buttonRefs.current[m.id];
@@ -869,18 +855,13 @@ export default function MatchesPage() {
                       type="button"
                       onClick={() => {
                         const newMode = "registered";
-                        console.log("[Matches] 🔵 Clicked: Setting homeTeamMode to:", newMode);
                         setHomeTeamMode(newMode);
                         setValue("homeTeamName", "");
                         if (typeof window !== "undefined") {
                           try {
                             localStorage.setItem("matchForm_homeTeamMode", newMode);
-                            console.log("[Matches] ✅ SAVED homeTeamMode to localStorage:", newMode);
-                            // Verify it was saved
-                            const verify = localStorage.getItem("matchForm_homeTeamMode");
-                            console.log("[Matches] ✅ VERIFIED localStorage has:", verify);
                           } catch (e) {
-                            console.error("[Matches] ❌ Failed to save:", e);
+                            console.error("[Matches] Failed to save:", e);
                           }
                         }
                       }}
@@ -896,18 +877,13 @@ export default function MatchesPage() {
                       type="button"
                       onClick={() => {
                         const newMode = "opponent";
-                        console.log("[Matches] 🔵 Clicked: Setting homeTeamMode to:", newMode);
                         setHomeTeamMode(newMode);
                         setValue("homeTeamId", "");
                         if (typeof window !== "undefined") {
                           try {
                             localStorage.setItem("matchForm_homeTeamMode", newMode);
-                            console.log("[Matches] ✅ SAVED homeTeamMode to localStorage:", newMode);
-                            // Verify it was saved
-                            const verify = localStorage.getItem("matchForm_homeTeamMode");
-                            console.log("[Matches] ✅ VERIFIED localStorage has:", verify);
                           } catch (e) {
-                            console.error("[Matches] ❌ Failed to save:", e);
+                            console.error("[Matches] Failed to save:", e);
                           }
                         }
                       }}
@@ -960,18 +936,13 @@ export default function MatchesPage() {
                       type="button"
                       onClick={() => {
                         const newMode = "registered";
-                        console.log("[Matches] 🔵 Clicked: Setting awayTeamMode to:", newMode);
                         setAwayTeamMode(newMode);
                         setValue("awayTeamName", "");
                         if (typeof window !== "undefined") {
                           try {
                             localStorage.setItem("matchForm_awayTeamMode", newMode);
-                            console.log("[Matches] ✅ SAVED awayTeamMode to localStorage:", newMode);
-                            // Verify it was saved
-                            const verify = localStorage.getItem("matchForm_awayTeamMode");
-                            console.log("[Matches] ✅ VERIFIED localStorage has:", verify);
                           } catch (e) {
-                            console.error("[Matches] ❌ Failed to save:", e);
+                            console.error("[Matches] Failed to save:", e);
                           }
                         }
                       }}
@@ -987,18 +958,13 @@ export default function MatchesPage() {
                       type="button"
                       onClick={() => {
                         const newMode = "opponent";
-                        console.log("[Matches] 🔵 Clicked: Setting awayTeamMode to:", newMode);
                         setAwayTeamMode(newMode);
                         setValue("awayTeamId", "");
                         if (typeof window !== "undefined") {
                           try {
                             localStorage.setItem("matchForm_awayTeamMode", newMode);
-                            console.log("[Matches] ✅ SAVED awayTeamMode to localStorage:", newMode);
-                            // Verify it was saved
-                            const verify = localStorage.getItem("matchForm_awayTeamMode");
-                            console.log("[Matches] ✅ VERIFIED localStorage has:", verify);
                           } catch (e) {
-                            console.error("[Matches] ❌ Failed to save:", e);
+                            console.error("[Matches] Failed to save:", e);
                           }
                         }
                       }}

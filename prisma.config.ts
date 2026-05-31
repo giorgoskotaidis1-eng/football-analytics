@@ -1,4 +1,4 @@
-import { defineConfig, env } from "prisma/config";
+import { defineConfig } from "prisma/config";
 import { config } from "dotenv";
 
 // Load .env file explicitly
@@ -11,6 +11,6 @@ export default defineConfig({
   },
   engine: "classic",
   datasource: {
-    url: env("DATABASE_URL") || process.env.DATABASE_URL || "file:./prisma/dev.db",
+    url: process.env.DATABASE_URL ?? "",
   },
 });

@@ -15,8 +15,43 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const seasonFilter = searchParams.get("season"); // Optional: filter by specific season
 
-    // Fetch all matches
+    // Get user's team IDs
+    const userTeams = await prisma.userTeam.findMany({
+      where: { userId: user.id, status: "active" },
+      select: { teamId: true },
+    });
+    
+    const createdTeams = await prisma.team.findMany({
+      where: { createdById: user.id },
+      select: { id: true },
+    });
+    
+    const userTeamIds = [
+      ...userTeams.map((ut) => ut.teamId),
+      ...createdTeams.map((t) => t.id),
+    ];
+
+    if (userTeamIds.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        seasons: [],
+        summary: {
+          totalSeasons: 0,
+          totalMatches: 0,
+          totalGoals: 0,
+          totalXG: 0,
+        },
+      });
+    }
+
+    // Fetch only matches from user's teams
     const matches = await prisma.match.findMany({
+      where: {
+        OR: [
+          { homeTeamId: { in: userTeamIds } },
+          { awayTeamId: { in: userTeamIds } },
+        ],
+      },
       include: {
         homeTeam: { select: { id: true, name: true } },
         awayTeam: { select: { id: true, name: true } },

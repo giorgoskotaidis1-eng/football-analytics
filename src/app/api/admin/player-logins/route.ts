@@ -18,12 +18,29 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "Forbidden" }, { status: 403 });
     }
 
-    // Get admin's team (if user has a team association)
-    // For now, we'll show all players, but you can filter by teamId if needed
-    // TODO: Add teamId to User model or use a different association method
+    // Get user's team IDs to filter players
+    const userTeams = await prisma.userTeam.findMany({
+      where: { userId: user.id, status: "active" },
+      select: { teamId: true },
+    });
     
-    // Use raw SQL query to get players with login tracking (workaround until Prisma client regenerates)
-    // Filter by team if admin has a specific team (can be extended later)
+    const createdTeams = await prisma.team.findMany({
+      where: { createdById: user.id },
+      select: { id: true },
+    });
+    
+    const userTeamIds = [
+      ...userTeams.map((ut) => ut.teamId),
+      ...createdTeams.map((t) => t.id),
+    ];
+
+    // Build WHERE clause for team filtering
+    const teamFilter = userTeamIds.length > 0 
+      ? `AND p.teamId IN (${userTeamIds.join(',')})`
+      : `AND 1=0`; // No teams = no players
+    
+    // Use raw SQL query to get players with login tracking
+    // Filter by user's teams
     const playersRaw = await prisma.$queryRawUnsafe<Array<{
       id: number;
       name: string;
@@ -48,6 +65,7 @@ export async function GET(request: NextRequest) {
       FROM Player p
       LEFT JOIN Team t ON p.teamId = t.id
       WHERE p.email IS NOT NULL
+      ${teamFilter}
       ORDER BY p.isOnline DESC, p.lastLoginAt DESC
     `);
 

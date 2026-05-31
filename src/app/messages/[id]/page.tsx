@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useEffect, useState, FormEvent } from "react";
 
 type Message = {
@@ -10,37 +10,35 @@ type Message = {
   body: string;
   createdAt: string;
   readAt: string | null;
-  fromUser?: { name: string | null; email: string };
-  toUser?: { name: string | null; email: string };
+  fromUser?: { id?: number; name: string | null; email: string };
+  toUser?: { id?: number; name: string | null; email: string };
 };
 
 export default function MessageThreadPage() {
-  const router = useRouter();
   const params = useParams();
   const id = params?.id as string | undefined;
 
   const [body, setBody] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+
+  async function loadMessages() {
+    if (!id) return;
+    const res = await fetch(`/api/messages?threadId=${id}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.ok && Array.isArray(data.messages)) {
+      setMessages(data.messages);
+      if (typeof data.currentUserId === "number") {
+        setCurrentUserId(data.currentUserId);
+      }
+    }
+  }
 
   useEffect(() => {
     if (!id) return;
-    async function fetchMessages() {
-      try {
-        const res = await fetch(`/api/messages?threadId=${id}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.ok && data.messages) {
-            setMessages(data.messages);
-          }
-        }
-      } catch {
-        // ignore errors
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchMessages();
+    loadMessages().finally(() => setLoading(false));
   }, [id]);
 
   async function handleSend(e: FormEvent) {
@@ -56,14 +54,7 @@ export default function MessageThreadPage() {
         }),
       });
       setBody("");
-      // Reload messages
-      const res = await fetch(`/api/messages?threadId=${id}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.ok && data.messages) {
-          setMessages(data.messages);
-        }
-      }
+      await loadMessages();
     } catch {
       // ignore errors
     }
@@ -90,7 +81,8 @@ export default function MessageThreadPage() {
             <p className="text-[10px] text-slate-500">No messages yet in this thread. Start the conversation!</p>
           ) : (
             messages.map((m) => {
-              const isFromCurrentUser = m.fromUser?.email === "current"; // TODO: Get from session
+              const isFromCurrentUser =
+                currentUserId !== null && m.fromUserId === currentUserId;
               return (
                 <div key={m.id} className={`flex ${isFromCurrentUser ? "justify-end" : "justify-start"}`}>
                   <div

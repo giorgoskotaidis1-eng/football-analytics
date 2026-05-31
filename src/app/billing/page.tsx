@@ -12,6 +12,18 @@ type Subscription = {
   renewsAt: string | null;
 };
 
+type PaymentMethod = {
+  id: number;
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+  cardholderName: string | null;
+  billingEmail: string | null;
+  isDefault: boolean;
+  provider: string;
+};
+
 export default function BillingPage() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -20,13 +32,88 @@ export default function BillingPage() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [user, setUser] = useState<{ email?: string; name?: string } | null>(null);
   const [showSalesModal, setShowSalesModal] = useState(false);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [removingId, setRemovingId] = useState<number | null>(null);
+
+  async function reloadPaymentMethods() {
+    try {
+      const res = await fetch("/api/billing/payment-methods");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.ok && Array.isArray(data.methods)) {
+        setPaymentMethods(data.methods);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function removePaymentMethod(id: number) {
+    if (!confirm(t("removePaymentMethodConfirm") || "Remove this payment method?")) return;
+    setRemovingId(id);
+    try {
+      const res = await fetch(`/api/billing/payment-methods?id=${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        alert(body?.message ?? t("anErrorOccurred"));
+        return;
+      }
+      await reloadPaymentMethods();
+    } catch {
+      alert(t("anErrorOccurred"));
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  async function startCheckout(plan: string) {
+    try {
+      const res = await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; mode?: string; url?: string; error?: string; message?: string }
+        | null;
+      if (!res.ok || !data?.ok || !data.url) {
+        const msg = data?.message || t("failedToStartCheckout");
+        alert(
+          data?.error === "BILLING_NOT_CONFIGURED"
+            ? `${msg}\n\n(${t("billing")} env vars missing — see BILLING_SETUP.md)`
+            : msg
+        );
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      alert(t("anErrorOccurred"));
+    }
+  }
+
+  async function openBillingPortal() {
+    try {
+      const res = await fetch("/api/billing/portal", { method: "POST" });
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; url?: string; error?: string; message?: string }
+        | null;
+      if (!res.ok || !data?.ok || !data.url) {
+        alert(data?.message || t("anErrorOccurred"));
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      alert(t("anErrorOccurred"));
+    }
+  }
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [userRes, subRes] = await Promise.all([
+        const [userRes, subRes, pmRes] = await Promise.all([
           fetch("/api/account/me"),
           fetch("/api/billing/subscription"),
+          fetch("/api/billing/payment-methods"),
         ]);
 
         if (!userRes.ok) {
@@ -50,6 +137,13 @@ export default function BillingPage() {
             });
           }
         }
+
+        if (pmRes.ok) {
+          const pmData = await pmRes.json();
+          if (pmData?.ok && Array.isArray(pmData.methods)) {
+            setPaymentMethods(pmData.methods);
+          }
+        }
       } catch {
         router.replace("/auth/login");
       } finally {
@@ -58,6 +152,21 @@ export default function BillingPage() {
     }
     loadData();
   }, [router]);
+
+  function brandLabel(brand: string) {
+    switch (brand) {
+      case "visa":
+        return "Visa";
+      case "mastercard":
+        return "Mastercard";
+      case "amex":
+        return "Amex";
+      case "discover":
+        return "Discover";
+      default:
+        return brand.charAt(0).toUpperCase() + brand.slice(1);
+    }
+  }
 
   if (loading) {
     return (
@@ -110,25 +219,7 @@ export default function BillingPage() {
             className="mt-4 h-8 rounded-md border border-slate-700 bg-slate-900 text-[11px] font-semibold text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             disabled={subscription?.plan === "starter"}
             onClick={() => {
-              startTransition(async () => {
-                try {
-                  const res = await fetch("/api/billing/checkout", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ plan: "starter" }),
-                  });
-                  if (!res.ok) {
-                    alert(t("failedToStartCheckout"));
-                    return;
-                  }
-                  const data = (await res.json()) as { url?: string };
-                  if (data?.url) {
-                    window.location.href = data.url;
-                  }
-                } catch {
-                  alert(t("anErrorOccurred"));
-                }
-              });
+              startTransition(() => startCheckout("starter"));
             }}
           >
             {subscription?.plan === "starter"
@@ -157,25 +248,7 @@ export default function BillingPage() {
             className="mt-4 h-8 rounded-md bg-emerald-500 text-[11px] font-semibold text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
             disabled={isPending || subscription?.plan === "pro_monthly"}
             onClick={() => {
-              startTransition(async () => {
-                try {
-                  const res = await fetch("/api/billing/checkout", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ plan: "pro_monthly" }),
-                  });
-                  if (!res.ok) {
-                    alert(t("failedToStartCheckout"));
-                    return;
-                  }
-                  const data = (await res.json()) as { url?: string };
-                  if (data?.url) {
-                    window.location.href = data.url;
-                  }
-                } catch {
-                  alert(t("anErrorOccurred"));
-                }
-              });
+              startTransition(() => startCheckout("pro_monthly"));
             }}
           >
             {subscription?.plan === "pro_monthly"
@@ -215,28 +288,52 @@ export default function BillingPage() {
             </div>
             <p className="font-semibold text-slate-200">{t("paymentMethod")}</p>
           </div>
-          {subscription?.plan ? (
-            <>
-              <div className="flex items-center justify-between rounded-xl border border-slate-700/50 bg-gradient-to-br from-slate-900/50 to-slate-950/50 px-4 py-3.5 shadow-lg">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-10 w-14 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-600 to-indigo-600 shadow-md">
-                    <span className="text-xs font-bold text-white">{t("visa")}</span>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm font-semibold text-slate-100">Visa ···· 4242</p>
-                    <p className="text-[10px] text-slate-400">
-                      {t("expires")} 12/27 · {user?.email || t("billingOwner")}
-                    </p>
-                  </div>
-                </div>
-                <Link
-                  href="/billing/checkout?plan=update"
-                  className="rounded-lg border border-slate-600 bg-slate-800/50 px-4 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700/50 hover:border-slate-500 transition-colors"
+          {paymentMethods.length > 0 ? (
+            <div className="space-y-2">
+              {paymentMethods.map((pm) => (
+                <div
+                  key={pm.id}
+                  className="flex items-center justify-between rounded-xl border border-slate-700/50 bg-gradient-to-br from-slate-900/50 to-slate-950/50 px-4 py-3.5 shadow-lg"
                 >
-                  {t("updateCard")}
-                </Link>
-              </div>
-            </>
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-10 w-14 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-600 to-indigo-600 shadow-md">
+                      <span className="text-[10px] font-bold uppercase text-white">{pm.brand}</span>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-slate-100">
+                        {brandLabel(pm.brand)} ···· {pm.last4}
+                        {pm.isDefault && (
+                          <span className="ml-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase text-emerald-300">
+                            {t("default") || "Default"}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        {t("expires")} {String(pm.expMonth).padStart(2, "0")}/{String(pm.expYear).slice(-2)}
+                        {" · "}
+                        {pm.billingEmail || pm.cardholderName || user?.email || t("billingOwner")}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removePaymentMethod(pm.id)}
+                    disabled={removingId === pm.id}
+                    className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-[11px] font-medium text-red-200 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {removingId === pm.id ? t("removing") || "Removing…" : t("remove") || "Remove"}
+                  </button>
+                </div>
+              ))}
+              <Link
+                href="/billing/payment-methods/new"
+                className="mt-2 inline-flex items-center gap-2 rounded-lg border border-emerald-600/50 bg-emerald-600/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-400 hover:bg-emerald-600/20"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                {t("addPaymentMethod")}
+              </Link>
+            </div>
           ) : (
             <div className="rounded-xl border-2 border-dashed border-slate-700/50 bg-slate-950/50 px-6 py-8 text-center">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-900/50 border border-slate-800">
@@ -247,7 +344,7 @@ export default function BillingPage() {
               <p className="mb-1 text-sm font-medium text-slate-300">{t("noPaymentMethodOnFile")}</p>
               <p className="mb-4 text-xs text-slate-500">{t("addPaymentMethodToSubscribe")}</p>
               <Link
-                href="/billing/checkout?plan=pro_monthly"
+                href="/billing/payment-methods/new"
                 className="inline-flex items-center gap-2 rounded-lg border border-emerald-600/50 bg-emerald-600/10 px-4 py-2 text-xs font-semibold text-emerald-400 hover:bg-emerald-600/20 hover:border-emerald-500/50 transition-colors"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -303,19 +400,9 @@ export default function BillingPage() {
             </>
           )}
           <button
-            className="mt-1 h-8 w-full rounded-md border border-slate-700 bg-slate-900 text-[11px] text-slate-200 hover:bg-slate-800"
-            onClick={async () => {
-              try {
-                const res = await fetch("/api/billing/portal", { method: "POST" });
-                if (!res.ok) return;
-                const data = (await res.json()) as { url?: string };
-                if (data?.url) {
-                  window.location.href = data.url;
-                }
-              } catch {
-                // ignore, skeleton only
-              }
-            }}
+            className="mt-1 h-8 w-full rounded-md border border-slate-700 bg-slate-900 text-[11px] text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isPending}
+            onClick={() => startTransition(() => openBillingPortal())}
           >
             {t("manageRenewalSettings")}
           </button>

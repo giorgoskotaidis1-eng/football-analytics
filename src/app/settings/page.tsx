@@ -30,7 +30,14 @@ type AccountState = {
   phone?: string | null;
   phoneVerified?: boolean;
   profilePicture?: string | null;
+  notificationPreference?: "all" | "important" | "muted";
 };
+
+type SubscriptionState = {
+  plan: string | null;
+  status: string;
+  renewsAt: string | null;
+} | null;
 
 export default function SettingsPage() {
   const { t, language, setLanguage } = useTranslation();
@@ -54,6 +61,9 @@ export default function SettingsPage() {
   const [uploadingPicture, setUploadingPicture] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [subscription, setSubscription] = useState<SubscriptionState>(null);
+  const [notificationPref, setNotificationPref] = useState<"all" | "important" | "muted">("all");
+  const [savingNotification, setSavingNotification] = useState(false);
 
   function getPasswordStrengthLabel(pwd: string): { label: string; level: "weak" | "medium" | "strong" } {
     let score = 0;
@@ -157,16 +167,35 @@ export default function SettingsPage() {
           };
         };
         if (res.ok && data.ok && data.user?.email) {
+          const u = data.user as {
+            email: string;
+            name?: string | null;
+            role?: string | null;
+            createdAt?: string;
+            emailVerified?: boolean;
+            phone?: string | null;
+            phoneVerified?: boolean;
+            profilePicture?: string | null;
+            notificationPreference?: string;
+          };
+          const pref =
+            (u.notificationPreference === "important" ||
+            u.notificationPreference === "muted" ||
+            u.notificationPreference === "all"
+              ? u.notificationPreference
+              : "all") as "all" | "important" | "muted";
           setAccount({
-            email: data.user.email,
-            name: data.user.name || "",
-            role: data.user.role || t("headCoach"),
-            joinedAt: data.user.createdAt ?? null,
-            emailVerified: data.user.emailVerified,
-            phone: data.user.phone || "",
-            phoneVerified: data.user.phoneVerified,
-            profilePicture: data.user.profilePicture || null,
+            email: u.email,
+            name: u.name || "",
+            role: u.role || t("headCoach"),
+            joinedAt: u.createdAt ?? null,
+            emailVerified: u.emailVerified,
+            phone: u.phone || "",
+            phoneVerified: u.phoneVerified,
+            profilePicture: u.profilePicture || null,
+            notificationPreference: pref,
           });
+          setNotificationPref(pref);
         } else {
           router.replace("/auth/login");
         }
@@ -178,6 +207,65 @@ export default function SettingsPage() {
     }
     loadAccount();
   }, [router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSubscription() {
+      try {
+        const res = await fetch("/api/billing/subscription");
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as
+          | { ok?: boolean; plan?: string | null; status?: string; renewsAt?: string | null }
+          | null;
+        if (cancelled || !data?.ok) return;
+        setSubscription({
+          plan: data.plan ?? null,
+          status: data.status ?? "none",
+          renewsAt: data.renewsAt ?? null,
+        });
+      } catch {
+        // ignore - subscription is optional
+      }
+    }
+    loadSubscription();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleNotificationChange(value: "all" | "important" | "muted") {
+    setNotificationPref(value);
+    setSavingNotification(true);
+    try {
+      const res = await fetch("/api/account/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notificationPreference: value }),
+      });
+      if (!res.ok) {
+        // Roll back optimistic update on failure
+        setNotificationPref(account?.notificationPreference || "all");
+      } else if (account) {
+        setAccount({ ...account, notificationPreference: value });
+      }
+    } catch {
+      setNotificationPref(account?.notificationPreference || "all");
+    } finally {
+      setSavingNotification(false);
+    }
+  }
+
+  function planDisplayLabel(plan: string | null): string {
+    if (!plan) return t("free") || "Free";
+    const map: Record<string, string> = {
+      free: t("free") || "Free",
+      starter: t("starter") || "Starter",
+      pro_monthly: t("pro") || "Pro",
+      pro: t("pro") || "Pro",
+      elite: t("elite") || "Elite",
+    };
+    return map[plan] || plan;
+  }
 
   async function handleLogout() {
     try {
@@ -581,10 +669,17 @@ export default function SettingsPage() {
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("notifications")}</label>
-                <select className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 focus:bg-slate-900/80">
-                  <option>{t("allEvents")}</option>
-                  <option>{t("importantOnly")}</option>
-                  <option>{t("muted")}</option>
+                <select
+                  value={notificationPref}
+                  disabled={savingNotification || loadingAccount}
+                  onChange={(e) =>
+                    handleNotificationChange(e.target.value as "all" | "important" | "muted")
+                  }
+                  className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 focus:bg-slate-900/80 disabled:opacity-60"
+                >
+                  <option value="all">{t("allEvents")}</option>
+                  <option value="important">{t("importantOnly")}</option>
+                  <option value="muted">{t("muted")}</option>
                 </select>
               </div>
             </div>
@@ -607,8 +702,16 @@ export default function SettingsPage() {
                   <p className="text-xs text-slate-400 mt-1">{t("manageYourPlanAndBillingDetails")}</p>
                 </div>
               </div>
-              <span className="rounded-xl border border-emerald-500/50 bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 px-4 py-2 text-xs font-bold text-emerald-300 shadow-lg shadow-emerald-500/20">
-                {t("currentPlan")}: {t("pro")}
+              <span
+                className={`rounded-xl border px-4 py-2 text-xs font-bold shadow-lg ${
+                  subscription && subscription.status === "active"
+                    ? "border-emerald-500/50 bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 text-emerald-300 shadow-emerald-500/20"
+                    : subscription && subscription.status === "past_due"
+                    ? "border-amber-500/50 bg-gradient-to-br from-amber-500/20 to-amber-600/10 text-amber-200 shadow-amber-500/20"
+                    : "border-slate-700/50 bg-gradient-to-br from-slate-800/50 to-slate-900/50 text-slate-300"
+                }`}
+              >
+                {t("currentPlan")}: {planDisplayLabel(subscription?.plan ?? null)}
               </span>
             </div>
             <div className="flex justify-end">

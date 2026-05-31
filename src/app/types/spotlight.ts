@@ -5,6 +5,7 @@ export type EventItem = {
   videoUrl?: string;      // πλήρες URL ή /api/... που δίνει mp4/HLS
   playerId?: string;
   type?: string;          // Event type: "shot", "pass", "tackle", etc.
+  matchEventId?: number;  // Optional original MatchEvent id for playlist linking
 };
 
 export type LineupEntry = {

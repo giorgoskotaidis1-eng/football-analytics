@@ -2,12 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { transcodeToMP4, checkFFmpegAvailable } from "@/lib/video-transcode";
-import { join, relative } from "path";
+import { join, relative, resolve, normalize, isAbsolute } from "path";
 import { existsSync } from "fs";
 import { unlink } from "fs/promises";
 
 export const runtime = "nodejs";
 export const maxDuration = 600; // 10 minutes for transcoding
+
+async function resolveMatchId(idParam: string): Promise<number | null> {
+  if (/^\d+$/.test(idParam)) {
+    return parseInt(idParam, 10);
+  }
+  const match = await prisma.match.findUnique({
+    where: { slug: idParam },
+    select: { id: true },
+  });
+  return match?.id ?? null;
+}
 
 /**
  * Transcode video to MP4 with H.264 codec
@@ -25,9 +36,8 @@ export async function POST(
   }
 
   const { id } = await params;
-  const matchId = parseInt(id);
-
-  if (isNaN(matchId)) {
+  const matchId = await resolveMatchId(id);
+  if (!matchId) {
     return NextResponse.json({ ok: false, message: "Invalid match ID" }, { status: 400 });
   }
 
@@ -54,11 +64,24 @@ export async function POST(
       }, { status: 503 });
     }
 
-    // Validate input path (security: ensure it's within uploads directory)
-    const uploadsDir = join(process.cwd(), "uploads", "videos");
-    const fullInputPath = join(process.cwd(), videoPath);
-    
-    if (!fullInputPath.startsWith(uploadsDir)) {
+    const cwd = process.cwd();
+    const uploadsVideosDir = join(cwd, "uploads", "videos");
+    const rawPath = videoPath.trim();
+    const normalizedArg = normalize(rawPath);
+    const fullInputPath =
+      isAbsolute(normalizedArg) || /^[A-Za-z]:/.test(rawPath)
+        ? resolve(normalizedArg)
+        : resolve(cwd, normalizedArg);
+
+    // Security: under default uploads/videos OR exact file path stored on this match (custom storage)
+    const underUploads = fullInputPath.startsWith(uploadsVideosDir);
+    const stored = match.videoPath?.trim();
+    const matchesStored =
+      !!stored &&
+      !/^https?:\/\//i.test(stored) &&
+      resolve(stored) === fullInputPath;
+
+    if (!underUploads && !matchesStored) {
       return NextResponse.json({ ok: false, message: "Invalid video path" }, { status: 400 });
     }
 
@@ -79,10 +102,13 @@ export async function POST(
       console.log(`[transcode] Progress: ${progress}%`);
     });
 
-    // Update match videoPath to point to converted video
-    // Use path.relative to get proper relative path (works on both Windows and Unix)
-    const relativeOutputPath = relative(process.cwd(), outputPath).replace(/\\/g, "/"); // Normalize path separators to forward slashes
-    console.log(`[transcode] Saving relative path to database: ${relativeOutputPath}`);
+    // Prefer project-relative path; on another drive (custom storage) keep absolute — match page + /video API support both
+    const relToCwd = relative(cwd, outputPath).replace(/\\/g, "/");
+    const relativeOutputPath =
+      relToCwd.startsWith("..") || /^[A-Za-z]:\//.test(relToCwd)
+        ? resolve(outputPath).replace(/\\/g, "/")
+        : relToCwd;
+    console.log(`[transcode] Saving videoPath to database: ${relativeOutputPath}`);
     await prisma.match.update({
       where: { id: matchId },
       data: { videoPath: relativeOutputPath },
@@ -105,8 +131,8 @@ export async function POST(
         // Determine leftSideTeam (default to "home" if match has homeTeamId)
         const leftSideTeam = match.homeTeamId ? "home" : "away";
         
-        // Use absolute path for analysis (the analyze endpoint expects file paths)
-        const absoluteVideoPath = join(process.cwd(), relativeOutputPath);
+        // Converted file on disk (works for project uploads and custom-drive output)
+        const absoluteVideoPath = resolve(outputPath);
         
         // Create a mock request for the analyze endpoint
         const analyzeRequest = new NextRequest(

@@ -14,9 +14,15 @@ export async function GET(request: NextRequest) {
   const threadId = searchParams.get("threadId");
 
   if (threadId) {
-    // Get messages for a specific thread
+    // Get messages for a specific thread - only if user is involved
     const messages = await prisma.message.findMany({
-      where: { threadId: parseInt(threadId) },
+      where: {
+        threadId: parseInt(threadId),
+        OR: [
+          { fromUserId: user.id },
+          { toUserId: user.id },
+        ],
+      },
       include: {
         fromUser: {
           select: { id: true, name: true, email: true },
@@ -28,13 +34,37 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: "asc" },
     });
 
-    return NextResponse.json({ ok: true, messages });
+    return NextResponse.json({ ok: true, messages, currentUserId: user.id });
   }
 
-  // Get all threads
+  // Get threads where user is involved (sent or received messages)
+  const userMessageThreadIds = await prisma.message.findMany({
+    where: {
+      OR: [
+        { fromUserId: user.id },
+        { toUserId: user.id },
+      ],
+    },
+    select: { threadId: true },
+    distinct: ["threadId"],
+  });
+
+  const threadIds = userMessageThreadIds.map((m) => m.threadId);
+
+  if (threadIds.length === 0) {
+    return NextResponse.json({ ok: true, threads: [] });
+  }
+
   const threads = await prisma.messageThread.findMany({
+    where: { id: { in: threadIds } },
     include: {
       messages: {
+        where: {
+          OR: [
+            { fromUserId: user.id },
+            { toUserId: user.id },
+          ],
+        },
         orderBy: { createdAt: "desc" },
         take: 1,
       },
@@ -74,18 +104,46 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.threadId) {
-    // Add message to existing thread
-    // Note: We need to determine toUserId from the thread
+    // Resolve recipient by inspecting the most recent message in this thread
+    // that involves the current user. The other participant is the recipient.
+    const lastMessage = await prisma.message.findFirst({
+      where: {
+        threadId: body.threadId,
+        OR: [
+          { fromUserId: user.id },
+          { toUserId: user.id },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      select: { fromUserId: true, toUserId: true },
+    });
+
+    if (!lastMessage) {
+      return NextResponse.json(
+        { ok: false, message: "Thread not found or you are not a participant" },
+        { status: 404 }
+      );
+    }
+
+    const resolvedToUserId =
+      lastMessage.fromUserId === user.id ? lastMessage.toUserId : lastMessage.fromUserId;
+
+    if (resolvedToUserId === user.id) {
+      return NextResponse.json(
+        { ok: false, message: "Could not determine recipient for thread" },
+        { status: 400 }
+      );
+    }
+
     const message = await prisma.message.create({
       data: {
         threadId: body.threadId,
         fromUserId: user.id,
-        toUserId: body.toUserId || user.id, // TODO: Get from thread
+        toUserId: resolvedToUserId,
         body: body.body,
       },
     });
 
-    // Update thread updatedAt
     await prisma.messageThread.update({
       where: { id: body.threadId },
       data: { updatedAt: new Date() },

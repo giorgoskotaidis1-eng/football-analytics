@@ -4,8 +4,37 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 const FROM_EMAIL = process.env.FROM_EMAIL || "onboarding@resend.dev";
 const APP_NAME = process.env.APP_NAME || "Football Analytics";
-const APP_URL = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const APP_URL = resolveAppUrl();
 const SALES_EMAIL = process.env.SALES_EMAIL || "sales@footballanalytics.com";
+
+/**
+ * Resolve the public app URL used inside outbound emails.
+ * In production we refuse to ship localhost links: doing so would point
+ * recipients at unreachable URLs, so we throw early and force the operator
+ * to set APP_URL / NEXT_PUBLIC_APP_URL.
+ */
+function resolveAppUrl(): string {
+  const fromEnv = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+  const isProd = process.env.NODE_ENV === "production";
+
+  if (fromEnv && fromEnv.trim().length > 0) {
+    if (isProd && /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|\/|$)/i.test(fromEnv)) {
+      throw new Error(
+        "[email] APP_URL points to localhost in production. Set APP_URL (or NEXT_PUBLIC_APP_URL) to your public origin before deploying."
+      );
+    }
+    return fromEnv;
+  }
+
+  if (isProd) {
+    throw new Error(
+      "[email] APP_URL is not configured in production. Set APP_URL (or NEXT_PUBLIC_APP_URL) before sending emails."
+    );
+  }
+
+  // Development fallback only.
+  return "http://localhost:3000";
+}
 
 export interface EmailOptions {
   to: string;
@@ -291,6 +320,65 @@ export async function sendPaymentFailureEmail(email: string, reason: string, nam
   return sendEmail({
     to: email,
     subject: `Payment Failed - ${APP_NAME}`,
+    html,
+    text,
+  });
+}
+
+export async function sendTeamInvitationEmail(
+  email: string,
+  teamName: string,
+  inviterName: string,
+  role: string,
+  invitationToken: string,
+  recipientName?: string
+) {
+  const acceptUrl = `${APP_URL}/auth/accept-invitation?token=${invitationToken}`;
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>You've been invited to ${teamName}</title>
+      </head>
+      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #0f172a;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #020617; padding: 40px 20px;">
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="color: white; margin: 0; font-size: 28px;">You've been invited!</h1>
+            <p style="color: #10b981; font-size: 16px; margin: 10px 0 0 0;">Join ${teamName}</p>
+          </div>
+          <div style="background-color: #1e293b; border-radius: 8px; padding: 30px; margin-bottom: 20px;">
+            <p style="color: #cbd5e1; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
+              Hi${recipientName ? ` ${recipientName}` : ""},
+            </p>
+            <p style="color: #cbd5e1; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
+              <strong style="color: #10b981;">${inviterName}</strong> has invited you to join <strong style="color: #10b981;">${teamName}</strong> as a <strong style="color: #10b981;">${role}</strong>.
+            </p>
+            <p style="color: #cbd5e1; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
+              Accept this invitation to access team statistics, match analysis, and collaborate with your team.
+            </p>
+            <div style="text-align: center; margin-top: 30px;">
+              <a href="${acceptUrl}" style="display: inline-block; background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600;">Accept Invitation</a>
+            </div>
+            <p style="color: #94a3b8; font-size: 14px; margin-top: 30px; text-align: center;">
+              Or copy and paste this link into your browser:<br>
+              <a href="${acceptUrl}" style="color: #10b981; word-break: break-all;">${acceptUrl}</a>
+            </p>
+          </div>
+          <p style="color: #64748b; font-size: 12px; text-align: center; margin-top: 30px;">
+            This invitation will expire in 7 days. If you didn't expect this invitation, you can safely ignore this email.
+          </p>
+        </div>
+      </body>
+    </html>
+  `;
+
+  const text = `You've been invited to ${teamName}!\n\nHi${recipientName ? ` ${recipientName}` : ""},\n\n${inviterName} has invited you to join ${teamName} as a ${role}.\n\nAccept this invitation to access team statistics, match analysis, and collaborate with your team.\n\nAccept invitation: ${acceptUrl}\n\nThis invitation will expire in 7 days. If you didn't expect this invitation, you can safely ignore this email.`;
+
+  return sendEmail({
+    to: email,
+    subject: `You've been invited to ${teamName} - ${APP_NAME}`,
     html,
     text,
   });

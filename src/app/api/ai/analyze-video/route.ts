@@ -202,43 +202,44 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        if (runResult.ok) {
-          try {
-            const result = JSON.parse(runResult.stdout);
-            resolve(
-              NextResponse.json({
-                ok: true,
-                analysis: result,
-              })
-            );
-          } catch (parseError) {
-            console.error(`[ai/analyze-video] Failed to parse Python output:`, parseError);
-            console.error(`[ai/analyze-video] stdout:`, runResult.stdout);
-            resolve(
-              NextResponse.json(
-                {
-                  ok: false,
-                  message: "Failed to parse analysis results",
-                  error: runResult.stdout,
-                },
-                { status: 500 }
-              )
-            );
-          }
+        if (runResult.ok === false) {
+          const analysisError = runResult.error;
+          console.error(`[ai/analyze-video] Python analysis failed: ${analysisError}`);
+          resolve(
+            NextResponse.json(
+              {
+                ok: false,
+                message: "Video analysis failed",
+                error: analysisError || "Unknown error",
+              },
+              { status: 500 }
+            )
+          );
           return;
         }
 
-        console.error(`[ai/analyze-video] Python analysis failed: ${runResult.error}`);
-        resolve(
-          NextResponse.json(
-            {
-              ok: false,
-              message: "Video analysis failed",
-              error: runResult.error || "Unknown error",
-            },
-            { status: 500 }
-          )
-        );
+        try {
+          const result = JSON.parse(runResult.stdout);
+          resolve(
+            NextResponse.json({
+              ok: true,
+              analysis: result,
+            })
+          );
+        } catch (parseError) {
+          console.error(`[ai/analyze-video] Failed to parse Python output:`, parseError);
+          console.error(`[ai/analyze-video] stdout:`, runResult.stdout);
+          resolve(
+            NextResponse.json(
+              {
+                ok: false,
+                message: "Failed to parse analysis results",
+                error: runResult.stdout,
+              },
+              { status: 500 }
+            )
+          );
+        }
       });
     });
   } catch (error) {

@@ -93,7 +93,7 @@ export function SidebarNav() {
         </span>
         <span className="flex-1">{item.label}</span>
         {isActive && (
-          <div className="h-1.5 w-1.5 rounded-full bg-white/60 animate-pulse" />
+          <div className="h-1.5 w-1.5 rounded-full bg-emerald-500/80 animate-pulse dark:bg-white/60" />
         )}
       </Link>
     );

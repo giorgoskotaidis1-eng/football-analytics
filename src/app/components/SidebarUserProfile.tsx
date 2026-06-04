@@ -60,12 +60,12 @@ export function SidebarUserProfile() {
 
   if (loading) {
     return (
-      <div className="mb-6 space-y-3 rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-5 shadow-xl">
+      <div className="mb-6 space-y-3 rounded-xl border border-border bg-card p-5 shadow-sm dark:border-slate-800/50 dark:bg-gradient-to-br dark:from-slate-900/90 dark:via-slate-950/95 dark:to-slate-900/90 dark:shadow-xl">
         <div className="flex items-center gap-3">
-          <div className="h-14 w-14 rounded-full bg-slate-800/50 animate-pulse" />
+          <div className="h-14 w-14 rounded-full bg-slate-200 animate-pulse dark:bg-slate-800/50" />
           <div className="flex-1 space-y-2">
-            <div className="h-4 w-20 bg-slate-800/50 rounded animate-pulse" />
-            <div className="h-3 w-24 bg-slate-800/50 rounded animate-pulse" />
+            <div className="h-4 w-20 bg-slate-200 rounded animate-pulse dark:bg-slate-800/50" />
+            <div className="h-3 w-24 bg-slate-200 rounded animate-pulse dark:bg-slate-800/50" />
           </div>
         </div>
       </div>
@@ -78,28 +78,28 @@ export function SidebarUserProfile() {
   }
 
   return (
-    <div className="mb-6 space-y-4 rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-5 shadow-xl">
+    <div className="mb-6 space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm dark:border-slate-800/50 dark:bg-gradient-to-br dark:from-slate-900/90 dark:via-slate-950/95 dark:to-slate-900/90 dark:shadow-xl">
       <div className="flex items-center gap-3">
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500/20 to-sky-500/20 border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
-          <span className="text-xl font-bold text-white">
+          <span className="text-xl font-bold text-emerald-700 dark:text-white">
             {displayName.charAt(0).toUpperCase()}
           </span>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-base font-bold text-white truncate">{displayName.toLowerCase()}</p>
-          <p className="text-xs text-slate-400 truncate">{displayRole}</p>
+          <p className="text-base font-bold text-text truncate">{displayName.toLowerCase()}</p>
+          <p className="text-xs text-muted truncate">{displayRole}</p>
         </div>
       </div>
       <div className="flex gap-2">
         <button
           onClick={handleLogout}
-          className="flex-1 rounded-lg border border-slate-800/50 bg-slate-900/50 px-3 py-2.5 text-xs font-medium text-white hover:bg-slate-800/50 hover:border-slate-700 transition-all"
+          className="flex-1 rounded-lg border border-border bg-slate-100 px-3 py-2.5 text-xs font-medium text-text hover:bg-slate-200 transition-all dark:border-slate-800/50 dark:bg-slate-900/50 dark:text-white dark:hover:bg-slate-800/50 dark:hover:border-slate-700"
         >
           {t("logout")}
         </button>
         <Link
           href="/settings"
-          className="flex-1 rounded-lg border border-slate-800/50 bg-slate-900/50 px-3 py-2.5 text-xs font-medium text-white hover:bg-slate-800/50 hover:border-slate-700 transition-all text-center"
+          className="flex-1 rounded-lg border border-border bg-slate-100 px-3 py-2.5 text-xs font-medium text-text hover:bg-slate-200 transition-all text-center dark:border-slate-800/50 dark:bg-slate-900/50 dark:text-white dark:hover:bg-slate-800/50 dark:hover:border-slate-700"
         >
           {t("uploadLogo")}
         </Link>

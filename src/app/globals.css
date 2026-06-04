@@ -2,14 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Light theme (default when .dark is not on <html>) */
 :root {
-  --bg: #050918;
-  --card: #0f172a;
-  --text: #e8edf5;
-  --muted: #9aa4b5;
-  --primary: #3b82f6;
-  --accent: #f6ad55;
-  --border: #111a2e;
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --primary: #059669;
+  --accent: #d97706;
+  --border: #e2e8f0;
   --background: var(--bg);
   --foreground: var(--text);
   --card-foreground: var(--text);

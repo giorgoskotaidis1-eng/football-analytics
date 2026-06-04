@@ -64,6 +64,34 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Theme-aware UI building blocks (use instead of hardcoded slate-900) */
+@layer components {
+  .fa-panel {
+    @apply relative overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-sm;
+  }
+  .dark .fa-panel {
+    @apply border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 shadow-2xl;
+  }
+  .fa-panel-header {
+    @apply relative overflow-hidden rounded-2xl border border-border bg-card p-8 shadow-sm;
+  }
+  .dark .fa-panel-header {
+    @apply border-slate-800/50 bg-gradient-to-br from-slate-900/80 via-slate-950/90 to-slate-900/80 shadow-2xl;
+  }
+  .fa-input {
+    @apply h-10 w-full rounded-xl border border-border bg-white px-4 text-sm text-text outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20;
+  }
+  .dark .fa-input {
+    @apply border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 text-slate-100 focus:border-emerald-500/50 focus:bg-slate-900/80;
+  }
+  .fa-subpanel {
+    @apply rounded-xl border border-border bg-slate-50 p-5 shadow-sm;
+  }
+  .dark .fa-subpanel {
+    @apply border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 shadow-lg;
+  }
+}
+
 .touch-manipulation {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;

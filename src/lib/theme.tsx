@@ -6,6 +6,13 @@ type Theme = "light" | "dark";
 
 const THEME_KEY = "fa_theme";
 
+function applyThemeToDocument(theme: Theme) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(THEME_KEY, theme);
+  document.documentElement.classList.toggle("dark", theme === "dark");
+  document.documentElement.setAttribute("data-theme", theme);
+}
+
 interface ThemeContextType {
   theme: Theme;
   setTheme: (theme: Theme) => void;
@@ -33,20 +40,21 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!mounted || typeof window === "undefined") return;
-
-    window.localStorage.setItem(THEME_KEY, theme);
-    const root = document.documentElement;
-    root.classList.toggle("dark", theme === "dark");
-    root.setAttribute("data-theme", theme);
+    if (!mounted) return;
+    applyThemeToDocument(theme);
   }, [theme, mounted]);
 
   const setTheme = (newTheme: Theme) => {
     setThemeState(newTheme);
+    applyThemeToDocument(newTheme);
   };
 
   const toggleTheme = () => {
-    setThemeState((prev) => (prev === "dark" ? "light" : "dark"));
+    setThemeState((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      applyThemeToDocument(next);
+      return next;
+    });
   };
 
   return (

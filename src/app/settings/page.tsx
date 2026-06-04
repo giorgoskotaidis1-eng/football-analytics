@@ -13,7 +13,7 @@ function ThemeSelector() {
     <select 
       value={theme}
       onChange={(e) => setTheme(e.target.value as "light" | "dark")}
-      className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 focus:bg-slate-900/80"
+      className="fa-input focus:border-purple-500/50 focus:ring-purple-500/20"
     >
       <option value="dark">{t("dark")}</option>
       <option value="light">{t("light")}</option>
@@ -387,10 +387,10 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="grid gap-6 md:gap-8 md:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)] text-xs text-slate-200">
+    <div className="grid gap-6 md:gap-8 md:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)] text-xs text-text">
       <div className="space-y-6">
         {/* Header - Premium */}
-        <div className="relative overflow-hidden rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900/80 via-slate-950/90 to-slate-900/80 p-8 shadow-2xl">
+        <div className="fa-panel-header">
           <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-purple-500/5"></div>
           <div className="relative space-y-4">
             <div className="flex items-center gap-3">
@@ -400,16 +400,16 @@ export default function SettingsPage() {
                 </svg>
               </div>
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">{t("profileAndSecurity")}</p>
-                <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-white via-white to-white/80 bg-clip-text text-transparent">{t("accountSettings")}</h1>
-                <p className="text-sm text-slate-400 mt-2 leading-relaxed">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted mb-1">{t("profileAndSecurity")}</p>
+                <h1 className="text-2xl font-bold tracking-tight text-text">{t("accountSettings")}</h1>
+                <p className="text-sm text-muted mt-2 leading-relaxed">
                   {t("manageYourPersonalDetails")}
                 </p>
               </div>
             </div>
 
             {account && (
-              <div className="mt-6 flex items-center justify-between gap-4 rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 p-5 shadow-lg">
+              <div className="mt-6 flex items-center justify-between gap-4 fa-subpanel">
                 <div className="flex items-center gap-4">
                   {account.profilePicture ? (
                     <img
@@ -423,10 +423,10 @@ export default function SettingsPage() {
                     </div>
                   )}
                   <div className="space-y-1">
-                    <p className="text-sm font-bold text-white truncate max-w-[200px]">
+                    <p className="text-sm font-bold text-text truncate max-w-[200px]">
                       {account.name || account.email}
                     </p>
-                    <p className="text-xs text-slate-400 truncate max-w-[200px]">{account.email}</p>
+                    <p className="text-xs text-muted truncate max-w-[200px]">{account.email}</p>
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-2">
@@ -465,7 +465,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Profile Picture Upload - Premium */}
-        <div className="group relative overflow-hidden rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-6 shadow-2xl transition-all hover:shadow-purple-500/10">
+        <div className="group fa-panel transition-all hover:shadow-purple-500/10 dark:hover:shadow-purple-500/10">
           <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 via-transparent to-pink-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
           <div className="relative">
             <div className="flex items-center gap-3 mb-6">
@@ -474,7 +474,7 @@ export default function SettingsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
               </div>
-              <p className="text-sm font-bold text-white">{t("profilePicture")}</p>
+              <p className="text-sm font-bold text-text">{t("profilePicture")}</p>
             </div>
             <div className="space-y-4">
               <div className="flex items-center gap-6">
@@ -553,7 +553,7 @@ export default function SettingsPage() {
         {/* Profile Form - Premium */}
         <form
           onSubmit={handleAccountSave}
-          className="group relative overflow-hidden rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-6 shadow-2xl transition-all hover:shadow-emerald-500/10"
+          className="group fa-panel transition-all hover:shadow-emerald-500/10"
         >
           <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-teal-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
           <div className="relative">
@@ -563,14 +563,14 @@ export default function SettingsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
               </div>
-              <p className="text-sm font-bold text-white">{t("profile")}</p>
+              <p className="text-sm font-bold text-text">{t("profile")}</p>
             </div>
             <div className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("fullName")}</label>
                   <input
-                    className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 focus:bg-slate-900/80"
+                    className="fa-input focus:border-emerald-500/50 focus:ring-emerald-500/20"
                     placeholder={t("coachAnalystName")}
                     value={account?.name || ""}
                     disabled={loadingAccount}
@@ -582,7 +582,7 @@ export default function SettingsPage() {
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("role")}</label>
                   <select
-                    className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 focus:bg-slate-900/80"
+                    className="fa-input focus:border-emerald-500/50 focus:ring-emerald-500/20"
                     value={account?.role || t("headCoach")}
                     disabled={loadingAccount}
                     onChange={(e) =>
@@ -599,7 +599,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("contactEmail")}</label>
                 <input
-                  className="h-10 w-full cursor-not-allowed rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/40 to-slate-950/40 px-4 text-sm text-slate-500 outline-none"
+                  className="fa-input cursor-not-allowed opacity-60"
                   value={account?.email || ""}
                   disabled
                 />
@@ -639,7 +639,7 @@ export default function SettingsPage() {
         </form>
 
         {/* Preferences - Premium */}
-        <div className="group relative overflow-hidden rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-6 shadow-2xl transition-all hover:shadow-blue-500/10">
+        <div className="group fa-panel transition-all hover:shadow-blue-500/10">
           <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
           <div className="relative">
             <div className="flex items-center gap-3 mb-6">
@@ -649,13 +649,13 @@ export default function SettingsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
               </div>
-              <p className="text-sm font-bold text-white">{t("preferences")}</p>
+              <p className="text-sm font-bold text-text">{t("preferences")}</p>
             </div>
             <div className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("language")}</label>
                 <select 
-                  className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 focus:bg-slate-900/80"
+                  className="fa-input focus:border-blue-500/50 focus:ring-blue-500/20"
                   value={language}
                   onChange={(e) => setLanguage(e.target.value as "en" | "gr")}
                 >
@@ -675,7 +675,7 @@ export default function SettingsPage() {
                   onChange={(e) =>
                     handleNotificationChange(e.target.value as "all" | "important" | "muted")
                   }
-                  className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 focus:bg-slate-900/80 disabled:opacity-60"
+                  className="fa-input focus:border-purple-500/50 focus:ring-purple-500/20 disabled:opacity-60"
                 >
                   <option value="all">{t("allEvents")}</option>
                   <option value="important">{t("importantOnly")}</option>
@@ -687,7 +687,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Subscription - Premium */}
-        <div className="group relative overflow-hidden rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-6 shadow-2xl transition-all hover:shadow-amber-500/10">
+        <div className="group fa-panel transition-all hover:shadow-amber-500/10">
           <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 via-transparent to-orange-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
           <div className="relative">
             <div className="flex items-center justify-between mb-4">
@@ -698,7 +698,7 @@ export default function SettingsPage() {
                   </svg>
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-white">{t("subscription")}</p>
+                  <p className="text-sm font-bold text-text">{t("subscription")}</p>
                   <p className="text-xs text-slate-400 mt-1">{t("manageYourPlanAndBillingDetails")}</p>
                 </div>
               </div>
@@ -730,7 +730,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Security - Premium */}
-        <div className="group relative overflow-hidden rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-6 shadow-2xl transition-all hover:shadow-red-500/10">
+        <div className="group fa-panel transition-all hover:shadow-red-500/10">
           <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 via-transparent to-orange-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
           <div className="relative">
             <div className="flex items-center gap-3 mb-6">
@@ -739,14 +739,14 @@ export default function SettingsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
               </div>
-              <p className="text-sm font-bold text-white">{t("security")}</p>
+              <p className="text-sm font-bold text-text">{t("security")}</p>
             </div>
             <form onSubmit={handlePasswordChange} className="space-y-4">
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("currentPassword")}</label>
                 <input
                   type="password"
-                  className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-red-500/50 focus:ring-2 focus:ring-red-500/20 focus:bg-slate-900/80"
+                  className="fa-input focus:border-red-500/50 focus:ring-red-500/20"
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
                 />
@@ -756,7 +756,7 @@ export default function SettingsPage() {
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("newPassword")}</label>
                   <input
                     type="password"
-                    className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 focus:bg-slate-900/80"
+                    className="fa-input focus:border-emerald-500/50 focus:ring-emerald-500/20"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                   />
@@ -768,7 +768,7 @@ export default function SettingsPage() {
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("confirmNewPassword")}</label>
                   <input
                     type="password"
-                    className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 focus:bg-slate-900/80"
+                    className="fa-input focus:border-emerald-500/50 focus:ring-emerald-500/20"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                   />
@@ -776,7 +776,7 @@ export default function SettingsPage() {
                 </div>
               </div>
               {pwdStrength && (
-                <div className="space-y-2 p-4 rounded-xl bg-gradient-to-br from-slate-900/50 to-slate-950/50 border border-slate-800/50">
+                <div className="space-y-2 p-4 rounded-xl fa-subpanel">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-slate-400">{t("passwordStrength")}</span>
                     <span
@@ -838,7 +838,7 @@ export default function SettingsPage() {
           </div>
         </div>
         {/* Phone Verification - Premium */}
-        <div className="group relative overflow-hidden rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-6 shadow-2xl transition-all hover:shadow-cyan-500/10">
+        <div className="group fa-panel transition-all hover:shadow-cyan-500/10">
           <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 via-transparent to-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
           <div className="relative">
             <div className="flex items-center gap-3 mb-4">
@@ -848,7 +848,7 @@ export default function SettingsPage() {
                 </svg>
               </div>
               <div>
-                <p className="text-sm font-bold text-white">{t("phoneVerification")}</p>
+                <p className="text-sm font-bold text-text">{t("phoneVerification")}</p>
                 <p className="text-xs text-slate-400 mt-1">
                   {t("addPhoneNumberToReceive")}
                 </p>
@@ -859,7 +859,7 @@ export default function SettingsPage() {
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("phoneNumber")}</label>
                   <input
-                    className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-cyan-500/50 focus:ring-2 focus:ring-cyan-500/20 focus:bg-slate-900/80"
+                    className="fa-input focus:border-cyan-500/50 focus:ring-cyan-500/20"
                     placeholder="+30 69xxxxxxxx"
                     value={phone || account?.phone || ""}
                     onChange={(e) => setPhone(e.target.value)}
@@ -884,7 +884,7 @@ export default function SettingsPage() {
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t("verificationCode")}</label>
                   <input
-                    className="h-10 w-full rounded-xl border border-slate-800/50 bg-gradient-to-br from-slate-900/60 to-slate-950/60 px-4 text-sm text-slate-100 outline-none transition-all focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 focus:bg-slate-900/80"
+                    className="fa-input focus:border-emerald-500/50 focus:ring-emerald-500/20"
                     placeholder={t("sixDigitCode")}
                     value={phoneCode}
                     onChange={(e) => setPhoneCode(e.target.value)}
@@ -927,7 +927,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Session & Privacy - Premium */}
-      <aside className="group relative overflow-hidden rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 p-6 shadow-2xl transition-all hover:shadow-indigo-500/10">
+      <aside className="group fa-panel transition-all hover:shadow-indigo-500/10">
         <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-transparent to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
         <div className="relative">
           <div className="flex items-center gap-3 mb-6">
@@ -936,7 +936,7 @@ export default function SettingsPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
             </div>
-            <p className="text-sm font-bold text-white">{t("sessionAndPrivacy")}</p>
+                  <p className="text-sm font-bold text-text">{t("sessionAndPrivacy")}</p>
           </div>
           <p className="text-xs text-slate-400 leading-relaxed mb-6">
             {t("controlHowYourDataIsUsed")}

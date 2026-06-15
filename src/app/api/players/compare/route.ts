@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { getUserTeamIds } from "@/lib/user-teams";
 
 export const runtime = "nodejs";
 
@@ -35,6 +36,13 @@ function passWasSuccessful(e: CompareEvent): boolean {
   return m.outcome === "successful";
 }
 
+function normalizePlayerIds(playerIds: unknown[]): number[] {
+  const normalized = playerIds
+    .map((id) => (typeof id === "string" ? Number.parseInt(id, 10) : id))
+    .filter((id): id is number => typeof id === "number" && Number.isFinite(id) && id > 0);
+  return Array.from(new Set(normalized));
+}
+
 // Get detailed stats for player comparison
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
@@ -51,8 +59,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "Invalid JSON in request body" }, { status: 400 });
     }
 
-    if (!body || !body.playerIds || !Array.isArray(body.playerIds) || body.playerIds.length === 0) {
-      console.error("[players.compare] Missing or invalid playerIds:", body);
+    if (!body || !Array.isArray(body.playerIds) || body.playerIds.length === 0) {
       return NextResponse.json({ ok: false, message: "At least one player ID is required" }, { status: 400 });
     }
 
@@ -60,38 +67,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "Maximum 4 players can be compared" }, { status: 400 });
     }
 
-    console.log(`[players.compare] Fetching players with IDs:`, body.playerIds, "count:", body.playerIds.length);
-    console.log(`[players.compare] Player IDs type:`, typeof body.playerIds[0], "sample:", body.playerIds[0]);
-    
-    // Ensure all IDs are numbers
-    const playerIds = body.playerIds.map(id => {
-      const numId = typeof id === 'string' ? parseInt(id) : id;
-      console.log(`[players.compare] Converting ID: ${id} (${typeof id}) -> ${numId} (${typeof numId})`);
-      return numId;
-    }).filter(id => {
-      const isValid = !isNaN(id) && id > 0;
-      if (!isValid) {
-        console.warn(`[players.compare] Filtering out invalid ID:`, id);
-      }
-      return isValid;
-    });
-    console.log(`[players.compare] Normalized player IDs:`, playerIds);
-    
-    // Get user's team IDs to verify access
-    const userTeams = await prisma.userTeam.findMany({
-      where: { userId: user.id, status: "active" },
-      select: { teamId: true },
-    });
-    
-    const createdTeams = await prisma.team.findMany({
-      where: { createdById: user.id },
-      select: { id: true },
-    });
-    
-    const userTeamIds = [
-      ...userTeams.map((ut) => ut.teamId),
-      ...createdTeams.map((t) => t.id),
-    ];
+    const playerIds = normalizePlayerIds(body.playerIds);
+    if (playerIds.length === 0) {
+      return NextResponse.json({ ok: false, message: "At least one valid player ID is required" }, { status: 400 });
+    }
+    if (playerIds.length > 4) {
+      return NextResponse.json({ ok: false, message: "Maximum 4 players can be compared" }, { status: 400 });
+    }
+
+    const userTeamIds = await getUserTeamIds(user.id);
 
     // Fetch players with all their match events
     const players = await prisma.player.findMany({
@@ -113,32 +97,6 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    console.log(`[players.compare] Found ${players.length} players in database`);
-    if (players.length > 0) {
-      console.log(`[players.compare] Player IDs found:`, players.map(p => ({ id: p.id, name: p.name })));
-    }
-    if (players.length !== playerIds.length) {
-      console.error(`[players.compare] ❌ MISMATCH! Requested ${playerIds.length} players but found ${players.length}`);
-      console.error(`[players.compare] Requested IDs:`, playerIds);
-      console.error(`[players.compare] Found IDs:`, players.map(p => p.id));
-      const missingIds = playerIds.filter(id => !players.some(p => p.id === id));
-      console.error(`[players.compare] Missing IDs:`, missingIds);
-      
-      // Try to find missing players by checking database
-      for (const missingId of missingIds) {
-        const checkPlayer = await prisma.player.findUnique({ where: { id: missingId } });
-        if (checkPlayer) {
-          console.error(`[players.compare] ⚠️ Player ${missingId} exists in DB but wasn't returned by findMany!`);
-        } else {
-          console.error(`[players.compare] ❌ Player ${missingId} does NOT exist in database`);
-        }
-      }
-      
-      // Still return what we found, but log the issue
-    } else {
-      console.log(`[players.compare] ✅ All ${players.length} players found successfully`);
-    }
-    
     if (players.length === 0) {
       return NextResponse.json({
         ok: true,
@@ -181,60 +139,64 @@ export async function POST(request: NextRequest) {
 
       const touches = events.filter((e) => e.type === "touch").length;
 
+      const shotsByMatchAndMinute = new Map<number, Map<number, CompareEvent[]>>();
+      const successfulPassesByMatchAndMinute = new Map<number, Map<number, CompareEvent[]>>();
+      const goalsByMatch = new Map<number, CompareEvent[]>();
+
+      for (const shot of shots) {
+        if (shotOutcome(shot) === "goal") {
+          const goals = goalsByMatch.get(shot.matchId) || [];
+          goals.push(shot);
+          goalsByMatch.set(shot.matchId, goals);
+        }
+        if (shot.minute !== null) {
+          if (!shotsByMatchAndMinute.has(shot.matchId)) {
+            shotsByMatchAndMinute.set(shot.matchId, new Map());
+          }
+          const matchShots = shotsByMatchAndMinute.get(shot.matchId)!;
+          const shotsAtMinute = matchShots.get(shot.minute) || [];
+          shotsAtMinute.push(shot);
+          matchShots.set(shot.minute, shotsAtMinute);
+        }
+      }
+
+      for (const pass of passes) {
+        if (!passWasSuccessful(pass) || pass.minute === null) continue;
+        if (!successfulPassesByMatchAndMinute.has(pass.matchId)) {
+          successfulPassesByMatchAndMinute.set(pass.matchId, new Map());
+        }
+        const matchPasses = successfulPassesByMatchAndMinute.get(pass.matchId)!;
+        const passesAtMinute = matchPasses.get(pass.minute) || [];
+        passesAtMinute.push(pass);
+        matchPasses.set(pass.minute, passesAtMinute);
+      }
+
       // Calculate assists (pass before goal in same match)
       let assists = 0;
-      const goalsByMatch = new Map<number, typeof shots>();
-      shots
-        .filter((s) => shotOutcome(s) === "goal")
-        .forEach((goal) => {
-          if (goal.matchId) {
-            if (!goalsByMatch.has(goal.matchId)) {
-              goalsByMatch.set(goal.matchId, []);
-            }
-            goalsByMatch.get(goal.matchId)!.push(goal);
-          }
-        });
 
       goalsByMatch.forEach((matchGoals, matchId) => {
+        const passesByMinute = successfulPassesByMatchAndMinute.get(matchId);
+        if (!passesByMinute) return;
+
         matchGoals.forEach((goal) => {
-          const assistPass = passes.find(
-            (p) =>
-              p.matchId === matchId &&
-              p.minute !== null &&
-              goal.minute !== null &&
-              p.minute <= goal.minute &&
-              p.minute >= goal.minute - 2 &&
-              passWasSuccessful(p),
-          );
-          if (assistPass) assists++;
+          if (goal.minute === null) return;
+          for (let minute = goal.minute - 2; minute <= goal.minute; minute += 1) {
+            if ((passesByMinute.get(minute) || []).length > 0) {
+              assists += 1;
+              return;
+            }
+          }
         });
       });
 
-      // Calculate xA (expected assists) - passes that lead to shots
-      const xA = passes
-        .filter((p) => {
-          // Find if this pass led to a shot in the same match within 5 seconds
-          return shots.some(
-            (s) =>
-              s.matchId === p.matchId &&
-              s.minute !== null &&
-              p.minute !== null &&
-              s.minute > p.minute &&
-              s.minute <= p.minute + 1
-          );
-        })
-        .reduce((sum, p) => {
-          // Find the shot this pass led to
-          const resultingShot = shots.find(
-            (s) =>
-              s.matchId === p.matchId &&
-              s.minute !== null &&
-              p.minute !== null &&
-              s.minute > p.minute &&
-              s.minute <= p.minute + 1
-          );
-          return sum + (resultingShot?.xg || 0);
-        }, 0);
+      let xA = 0;
+      for (const pass of passes) {
+        if (pass.minute === null) continue;
+        const resultingShot = (shotsByMatchAndMinute.get(pass.matchId)?.get(pass.minute + 1) || [])[0];
+        if (resultingShot) {
+          xA += resultingShot.xg || 0;
+        }
+      }
 
       // Per 90 normalization
       const normalizePer90 = (value: number) => {
@@ -300,18 +262,6 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    console.log(`[players.compare] Returning stats for ${playersWithStats.length} players`);
-    if (playersWithStats.length > 0) {
-      console.log(`[players.compare] Sample player:`, {
-        id: playersWithStats[0].id,
-        name: playersWithStats[0].name,
-        matches: playersWithStats[0].matches,
-        minutes: playersWithStats[0].minutes,
-        goals: playersWithStats[0].goals,
-        assists: playersWithStats[0].assists,
-      });
-    }
-    
     return NextResponse.json({
       ok: true,
       players: playersWithStats,
@@ -324,4 +274,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

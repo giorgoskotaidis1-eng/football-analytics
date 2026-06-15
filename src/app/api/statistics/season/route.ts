@@ -1,8 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getUserTeamIds } from "@/lib/user-teams";
 
 export const runtime = "nodejs";
+
+function getSeasonFromDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const seasonYear = month >= 6 ? year : year - 1;
+  return `${seasonYear}-${(seasonYear + 1).toString().slice(-2)}`;
+}
+
+function parseSeasonRange(season: string): { start: Date; end: Date } | null {
+  const match = season.trim().match(/^(\d{4})(?:-(\d{2}|\d{4}))?$/);
+  if (!match) return null;
+  const startYear = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(startYear)) return null;
+  if (match[2]) {
+    const expectedShort = (startYear + 1).toString().slice(-2);
+    const expectedLong = (startYear + 1).toString();
+    if (match[2] !== expectedShort && match[2] !== expectedLong) {
+      return null;
+    }
+  }
+  return {
+    start: new Date(`${startYear}-07-01T00:00:00.000Z`),
+    end: new Date(`${startYear + 1}-07-01T00:00:00.000Z`),
+  };
+}
+
+function parseEventMetadata(metadata: string | null): Record<string, unknown> {
+  if (!metadata) return {};
+  try {
+    return JSON.parse(metadata);
+  } catch {
+    return {};
+  }
+}
 
 // Get season-based statistics
 export async function GET(request: NextRequest) {
@@ -15,21 +50,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const seasonFilter = searchParams.get("season"); // Optional: filter by specific season
 
-    // Get user's team IDs
-    const userTeams = await prisma.userTeam.findMany({
-      where: { userId: user.id, status: "active" },
-      select: { teamId: true },
-    });
-    
-    const createdTeams = await prisma.team.findMany({
-      where: { createdById: user.id },
-      select: { id: true },
-    });
-    
-    const userTeamIds = [
-      ...userTeams.map((ut) => ut.teamId),
-      ...createdTeams.map((t) => t.id),
-    ];
+    const userTeamIds = await getUserTeamIds(user.id);
 
     if (userTeamIds.length === 0) {
       return NextResponse.json({
@@ -44,6 +65,11 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    const seasonRange = seasonFilter ? parseSeasonRange(seasonFilter) : null;
+    if (seasonFilter && !seasonRange) {
+      return NextResponse.json({ ok: false, message: "Invalid season format" }, { status: 400 });
+    }
+
     // Fetch only matches from user's teams
     const matches = await prisma.match.findMany({
       where: {
@@ -51,12 +77,31 @@ export async function GET(request: NextRequest) {
           { homeTeamId: { in: userTeamIds } },
           { awayTeamId: { in: userTeamIds } },
         ],
+        ...(seasonRange
+          ? {
+              date: {
+                gte: seasonRange.start,
+                lt: seasonRange.end,
+              },
+            }
+          : {}),
       },
-      include: {
+      select: {
+        id: true,
+        date: true,
+        scoreHome: true,
+        scoreAway: true,
+        xgHome: true,
+        xgAway: true,
+        shotsHome: true,
+        shotsAway: true,
         homeTeam: { select: { id: true, name: true } },
         awayTeam: { select: { id: true, name: true } },
         events: {
-          include: {
+          select: {
+            type: true,
+            xg: true,
+            metadata: true,
             player: {
               select: { id: true, name: true, position: true },
             },
@@ -95,20 +140,7 @@ export async function GET(request: NextRequest) {
     }>();
 
     matches.forEach((match) => {
-      const matchDate = new Date(match.date);
-      const year = matchDate.getFullYear();
-      const month = matchDate.getMonth(); // 0-11
-      
-      // Season runs from July (month 6) to June (month 5)
-      // If month >= 6 (July-Dec), season is year-year+1
-      // If month < 6 (Jan-Jun), season is year-1-year
-      const seasonYear = month >= 6 ? year : year - 1;
-      const season = `${seasonYear}-${(seasonYear + 1).toString().slice(-2)}`;
-
-      // Filter by season if specified
-      if (seasonFilter && season !== seasonFilter) {
-        return;
-      }
+      const season = getSeasonFromDate(new Date(match.date));
 
       if (!seasonStats.has(season)) {
         seasonStats.set(season, {
@@ -177,27 +209,19 @@ export async function GET(request: NextRequest) {
         const playerStats = stats.players.get(playerId)!;
         playerStats.matches.add(match.id);
 
+        const metadata = parseEventMetadata(event.metadata);
         if (event.type === "shot") {
           playerStats.shots += 1;
           playerStats.xg += event.xg ?? 0;
-          
-          // Check if goal
-          try {
-            const metadata = event.metadata ? JSON.parse(event.metadata) : {};
-            if (metadata.outcome === "goal") {
-              playerStats.goals += 1;
-            }
-          } catch {}
+
+          if (metadata.outcome === "goal") {
+            playerStats.goals += 1;
+          }
         } else if (event.type === "pass") {
-          // Check if assist (pass before goal in same match)
-          // This is simplified - in real system you'd track goal events
-          try {
-            const metadata = event.metadata ? JSON.parse(event.metadata) : {};
-            if (metadata.assist === true) {
-              playerStats.assists += 1;
-              stats.totalAssists += 1;
-            }
-          } catch {}
+          if (metadata.assist === true) {
+            playerStats.assists += 1;
+            stats.totalAssists += 1;
+          }
         }
       });
     });
@@ -256,4 +280,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

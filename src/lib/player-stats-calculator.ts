@@ -1,6 +1,20 @@
 import { prisma } from "@/lib/prisma";
 import type { MatchEvent } from "@prisma/client";
 
+type ParsedMatchEvent = MatchEvent & {
+  parsedMetadata: Record<string, unknown>;
+  parsedOutcome: string | null;
+};
+
+function parseMetadata(metadata: string | null): Record<string, unknown> {
+  if (!metadata) return {};
+  try {
+    return JSON.parse(metadata);
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Calculate player statistics from MatchEvents
  * This function computes all season stats automatically from match events
@@ -36,9 +50,6 @@ export async function calculatePlayerStatsFromEvents(playerId: number) {
   }
 
   // Get unique matches and calculate total minutes played
-  const uniqueMatchIds = new Set(events.map((e) => e.matchId));
-  const matchesCount = uniqueMatchIds.size;
-
   // Calculate game time (max minute per match)
   const matchMinutes = new Map<number, number>();
   events.forEach((event) => {
@@ -50,107 +61,104 @@ export async function calculatePlayerStatsFromEvents(playerId: number) {
   const totalMinutes = Array.from(matchMinutes.values()).reduce((sum, min) => sum + min, 0);
   const minutes90 = totalMinutes / 90; // For per 90 calculations
 
-  // Helper to parse metadata
-  const parseMetadata = (metadata: string | null): Record<string, any> => {
-    if (!metadata) return {};
-    try {
-      return JSON.parse(metadata);
-    } catch {
-      return {};
-    }
-  };
+  const parsedEvents: ParsedMatchEvent[] = events.map((event) => {
+    const parsedMetadata = parseMetadata(event.metadata);
+    const parsedOutcome =
+      typeof parsedMetadata.outcome === "string" ? parsedMetadata.outcome : null;
+    return {
+      ...event,
+      parsedMetadata,
+      parsedOutcome,
+    };
+  });
 
   // Calculate goals (shots with outcome "goal")
-  const shots = events.filter((e) => e.type === "shot");
-  const goals = shots.filter((e) => {
-    const meta = parseMetadata(e.metadata);
-    return meta.outcome === "goal";
-  }).length;
+  const shots = parsedEvents.filter((e) => e.type === "shot");
+  const goals = shots.filter((e) => e.parsedOutcome === "goal").length;
 
   // Calculate total xG from shots
   const totalXG = shots.reduce((sum, e) => sum + (e.xg || 0), 0);
 
+  const passes = parsedEvents.filter((e) => e.type === "pass");
+  const successfulPasses = passes.filter((p) => p.parsedOutcome === "successful");
+
+  const goalsByMatch = new Map<number, ParsedMatchEvent[]>();
+  const shotsByMatchAndMinute = new Map<number, Map<number, ParsedMatchEvent[]>>();
+  const successfulPassesByMatchAndMinute = new Map<number, Map<number, ParsedMatchEvent[]>>();
+
+  for (const shot of shots) {
+    if (shot.parsedOutcome === "goal") {
+      const currentGoals = goalsByMatch.get(shot.matchId) || [];
+      currentGoals.push(shot);
+      goalsByMatch.set(shot.matchId, currentGoals);
+    }
+
+    if (shot.minute !== null) {
+      if (!shotsByMatchAndMinute.has(shot.matchId)) {
+        shotsByMatchAndMinute.set(shot.matchId, new Map());
+      }
+      const minuteShots = shotsByMatchAndMinute.get(shot.matchId)!;
+      const currentMinuteShots = minuteShots.get(shot.minute) || [];
+      currentMinuteShots.push(shot);
+      minuteShots.set(shot.minute, currentMinuteShots);
+    }
+  }
+
+  for (const pass of successfulPasses) {
+    if (pass.minute === null) continue;
+    if (!successfulPassesByMatchAndMinute.has(pass.matchId)) {
+      successfulPassesByMatchAndMinute.set(pass.matchId, new Map());
+    }
+    const minutePasses = successfulPassesByMatchAndMinute.get(pass.matchId)!;
+    const currentMinutePasses = minutePasses.get(pass.minute) || [];
+    currentMinutePasses.push(pass);
+    minutePasses.set(pass.minute, currentMinutePasses);
+  }
+
   // Calculate assists (passes that lead to goals)
   let assists = 0;
-  const goalsByMatch = new Map<number, typeof shots>();
-  shots.filter((s) => {
-    const meta = parseMetadata(s.metadata);
-    return meta.outcome === "goal";
-  }).forEach((goal) => {
-    if (goal.matchId) {
-      if (!goalsByMatch.has(goal.matchId)) {
-        goalsByMatch.set(goal.matchId, []);
-      }
-      goalsByMatch.get(goal.matchId)!.push(goal);
-    }
-  });
-
-  const passes = events.filter((e) => e.type === "pass");
   goalsByMatch.forEach((matchGoals, matchId) => {
+    const matchPassesByMinute = successfulPassesByMatchAndMinute.get(matchId);
+    if (!matchPassesByMinute) return;
+
     matchGoals.forEach((goal) => {
-      const assistPass = passes.find((p) => {
-        const pMeta = parseMetadata(p.metadata);
-        return (
-          p.matchId === matchId &&
-          p.minute !== null &&
-          goal.minute !== null &&
-          p.minute <= goal.minute &&
-          p.minute >= goal.minute - 2 &&
-          pMeta.outcome === "successful"
-        );
-      });
-      if (assistPass) assists++;
+      if (goal.minute === null) return;
+      for (let minute = goal.minute - 2; minute <= goal.minute; minute += 1) {
+        if ((matchPassesByMinute.get(minute) || []).length > 0) {
+          assists += 1;
+          return;
+        }
+      }
     });
   });
 
-  // Calculate xAG (expected assists) - xG of shots that resulted from passes
-  const xAG = passes
-    .filter((p) => {
-      return shots.some(
-        (s) =>
-          s.matchId === p.matchId &&
-          s.minute !== null &&
-          p.minute !== null &&
-          s.minute > p.minute &&
-          s.minute <= p.minute + 1
-      );
-    })
-    .reduce((sum, p) => {
-      const resultingShot = shots.find(
-        (s) =>
-          s.matchId === p.matchId &&
-          s.minute !== null &&
-          p.minute !== null &&
-          s.minute > p.minute &&
-          s.minute <= p.minute + 1
-      );
-      return sum + (resultingShot?.xg || 0);
-    }, 0);
+  let xAG = 0;
+  let keyPasses = 0;
+  for (const pass of passes) {
+    if (pass.minute === null) continue;
+    const matchShotsByMinute = shotsByMatchAndMinute.get(pass.matchId);
+    if (!matchShotsByMinute) continue;
 
-  // Calculate key passes (passes that lead to shots)
-  const keyPasses = passes.filter((p) => {
-    return shots.some(
-      (s) =>
-        s.matchId === p.matchId &&
-        s.minute !== null &&
-        p.minute !== null &&
-        s.minute > p.minute &&
-        s.minute <= p.minute + 1
-    );
-  }).length;
+    const resultingShot = (matchShotsByMinute.get(pass.minute + 1) || [])[0];
+    if (resultingShot) {
+      keyPasses += 1;
+      xAG += resultingShot.xg || 0;
+    }
+  }
 
   // Calculate progressive passes (passes that advance the ball significantly)
   const progressivePasses = passes.filter((p) => {
     if (p.x === null || p.y === null) return false;
-    const pMeta = parseMetadata(p.metadata);
+    const pMeta = p.parsedMetadata;
     if (pMeta.outcome !== "successful") return false;
     
     // Check if pass is into final third (most common progressive pass)
     if (p.y < 33.33) return true;
     
     // Check if pass has end coordinates and moves forward significantly
-    if (pMeta.endX !== undefined && pMeta.endY !== undefined) {
-      const forwardDistance = p.y - pMeta.endY; // Forward = lower y value
+    const endY = typeof pMeta.endY === "number" ? pMeta.endY : null;
+    if (endY !== null) {
+      const forwardDistance = p.y - endY; // Forward = lower y value
       if (forwardDistance >= 10) return true; // At least 10% forward
     }
     
@@ -158,21 +166,21 @@ export async function calculatePlayerStatsFromEvents(playerId: number) {
   }).length;
 
   // Calculate pressures (events with type "pressure")
-  const pressures = events.filter((e) => e.type === "pressure").length;
+  const pressures = parsedEvents.filter((e) => e.type === "pressure").length;
 
   // Calculate carries into final third (carries with y < 33.33)
-  const carries = events.filter((e) => e.type === "carry");
+  const carries = parsedEvents.filter((e) => e.type === "carry");
   const carriesIntoFinalThird = carries.filter((c) => {
     if (c.y === null) return false;
-    const cMeta = parseMetadata(c.metadata);
+    const cMeta = c.parsedMetadata;
     return cMeta.outcome === "successful" && c.y < 33.33;
   }).length;
 
   // Calculate defensive duels won (tackles + interceptions that are successful)
-  const tackles = events.filter((e) => e.type === "tackle");
-  const interceptions = events.filter((e) => e.type === "interception");
+  const tackles = parsedEvents.filter((e) => e.type === "tackle");
+  const interceptions = parsedEvents.filter((e) => e.type === "interception");
   const defensiveDuelsWon = [...tackles, ...interceptions].filter((e) => {
-    const meta = parseMetadata(e.metadata);
+    const meta = e.parsedMetadata;
     return meta.outcome === "successful" || meta.outcome === "won";
   }).length;
 
@@ -220,6 +228,3 @@ export async function updatePlayerStatsFromEvents(playerId: number) {
 
   return stats;
 }
-
-
-

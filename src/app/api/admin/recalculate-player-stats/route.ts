@@ -86,11 +86,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("[recalculate-stats] Error:", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to recalculate stats" },
+      { ok: false, message: "Failed to recalculate stats" },
       { status: 500 }
     );
   }
 }
-
 
 

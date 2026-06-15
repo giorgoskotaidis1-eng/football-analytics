@@ -1,8 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { getUserTeamIds } from "@/lib/user-teams";
 
 export const runtime = "nodejs";
+
+type ParsedRouteEvent = {
+  type: string;
+  matchId: number;
+  minute: number | null;
+  x: number | null;
+  y: number | null;
+  xg: number | null;
+  metadata: string | null;
+  parsedMetadata: Record<string, unknown>;
+  outcome: string | null;
+};
+
+function parseMetadata(metadata: string | null): Record<string, unknown> {
+  if (!metadata) return {};
+  try {
+    return JSON.parse(metadata);
+  } catch {
+    return {};
+  }
+}
+
+function parseNumericRouteId(value: string): { numericId: number | null; invalidNumeric: boolean } {
+  if (/^-?\d+$/.test(value)) {
+    const numericId = Number.parseInt(value, 10);
+    if (!Number.isFinite(numericId) || numericId <= 0) {
+      return { numericId: null, invalidNumeric: true };
+    }
+    return { numericId, invalidNumeric: false };
+  }
+  return { numericId: null, invalidNumeric: false };
+}
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -12,27 +46,16 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     }
 
     const { id } = await params;
-    console.log("[players/[id].GET] Looking for player with slug/id:", id);
+    const { numericId, invalidNumeric } = parseNumericRouteId(id);
+    if (invalidNumeric) {
+      return NextResponse.json({ ok: false, message: "Invalid player ID" }, { status: 400 });
+    }
 
-    // Get user's team IDs to verify access
-    const userTeams = await prisma.userTeam.findMany({
-      where: { userId: user.id, status: "active" },
-      select: { teamId: true },
-    });
-    
-    const createdTeams = await prisma.team.findMany({
-      where: { createdById: user.id },
-      select: { id: true },
-    });
-    
-    const userTeamIds = [
-      ...userTeams.map((ut) => ut.teamId),
-      ...createdTeams.map((t) => t.id),
-    ];
-
-    // Try to find by slug first, then by id if slug doesn't work
-    let player = await prisma.player.findUnique({
-      where: { slug: id },
+    const userTeamIds = await getUserTeamIds(user.id);
+    const player = await prisma.player.findFirst({
+      where: {
+        OR: [{ slug: id }, ...(numericId !== null ? [{ id: numericId }] : [])],
+      },
       include: {
         team: {
           select: { id: true, name: true, league: true },
@@ -47,52 +70,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       },
     });
 
-    // If not found by slug, try by id (in case someone uses numeric id)
     if (!player) {
-      const numericId = parseInt(id);
-      if (!isNaN(numericId)) {
-        console.log("[players/[id].GET] Not found by slug, trying by id:", numericId);
-        player = await prisma.player.findUnique({
-          where: { id: numericId },
-          include: {
-            team: {
-              select: { id: true, name: true, league: true },
-            },
-            matchEvents: {
-              include: {
-                match: {
-                  select: { id: true, date: true, competition: true },
-                },
-              },
-            },
-          },
-        });
-        if (player) {
-          console.log("[players/[id].GET] Found player by id:", player.id, player.name, "slug:", player.slug);
-        }
-      } else {
-        // If id is not numeric, try to find all players and check their slugs
-        console.log("[players/[id].GET] id is not numeric, checking all players for slug match...");
-        const allPlayers = await prisma.player.findMany({
-          select: { id: true, name: true, slug: true },
-          take: 100, // Limit to avoid performance issues
-        });
-        console.log("[players/[id].GET] Sample players:", allPlayers.slice(0, 5).map(p => ({ id: p.id, name: p.name, slug: p.slug })));
-      }
+      return NextResponse.json({ ok: false, message: "Player not found" }, { status: 404 });
     }
-
-    if (!player) {
-      console.log("[players/[id].GET] Player not found with slug/id:", id);
-      // Try to get all players to see what slugs exist
-      const samplePlayers = await prisma.player.findMany({
-        select: { id: true, name: true, slug: true },
-        take: 10,
-      });
-      console.log("[players/[id].GET] Sample players in DB:", samplePlayers.map(p => ({ id: p.id, name: p.name, slug: p.slug })));
-      return NextResponse.json({ ok: false, message: `Player not found with slug/id: ${id}` }, { status: 404 });
-    }
-
-    console.log("[players/[id].GET] Found player:", player.id, player.name, player.slug);
 
     // Verify user has access to this player (through team)
     if (player.teamId && !userTeamIds.includes(player.teamId)) {
@@ -103,8 +83,16 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       return NextResponse.json({ ok: false, message: "You don't have access to this player" }, { status: 403 });
     }
 
-  // Calculate detailed stats from events
   const events = player.matchEvents || [];
+  const parsedEvents: ParsedRouteEvent[] = events.map((event) => {
+    const parsedMetadata = parseMetadata(event.metadata);
+    return {
+      ...event,
+      parsedMetadata,
+      outcome: typeof parsedMetadata.outcome === "string" ? parsedMetadata.outcome : null,
+    };
+  });
+
   const uniqueMatchIds = new Set(events.map((e) => e.matchId));
   const matchesCount = uniqueMatchIds.size;
 
@@ -119,69 +107,83 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const totalMinutes = Array.from(matchMinutes.values()).reduce((sum, min) => sum + min, 0);
   const minutes90 = totalMinutes / 90;
 
-  // Helper to parse metadata
-  const parseMetadata = (metadata: string | null): Record<string, any> => {
-    if (!metadata) return {};
-    try {
-      return JSON.parse(metadata);
-    } catch {
-      return {};
-    }
-  };
+  const shots = parsedEvents.filter((e) => e.type === "shot");
+  const passes = parsedEvents.filter((e) => e.type === "pass");
+  const successfulPasses = passes.filter((e) => e.outcome === "successful");
 
-  // Calculate stats
-  const shots = events.filter((e) => e.type === "shot");
-  const goals = shots.filter((e) => {
-    const meta = parseMetadata(e.metadata);
-    return meta.outcome === "goal";
-  }).length;
-  const shotsOnTarget = shots.filter((e) => {
-    const meta = parseMetadata(e.metadata);
-    return meta.outcome === "on_target" || meta.outcome === "goal";
-  }).length;
+  const shotsByMatchAndMinute = new Map<number, Map<number, ParsedRouteEvent[]>>();
+  const successfulPassesByMatchAndMinute = new Map<number, Map<number, ParsedRouteEvent[]>>();
+  const goalsByMatch = new Map<number, ParsedRouteEvent[]>();
+
+  for (const shot of shots) {
+    if (shot.outcome === "goal") {
+      const goals = goalsByMatch.get(shot.matchId) || [];
+      goals.push(shot);
+      goalsByMatch.set(shot.matchId, goals);
+    }
+    if (shot.minute !== null) {
+      if (!shotsByMatchAndMinute.has(shot.matchId)) {
+        shotsByMatchAndMinute.set(shot.matchId, new Map());
+      }
+      const matchMap = shotsByMatchAndMinute.get(shot.matchId)!;
+      const shotsAtMinute = matchMap.get(shot.minute) || [];
+      shotsAtMinute.push(shot);
+      matchMap.set(shot.minute, shotsAtMinute);
+    }
+  }
+
+  for (const pass of successfulPasses) {
+    if (pass.minute === null) continue;
+    if (!successfulPassesByMatchAndMinute.has(pass.matchId)) {
+      successfulPassesByMatchAndMinute.set(pass.matchId, new Map());
+    }
+    const matchMap = successfulPassesByMatchAndMinute.get(pass.matchId)!;
+    const passesAtMinute = matchMap.get(pass.minute) || [];
+    passesAtMinute.push(pass);
+    matchMap.set(pass.minute, passesAtMinute);
+  }
+
+  const goals = shots.filter((e) => e.outcome === "goal").length;
+  const shotsOnTarget = shots.filter((e) => e.outcome === "on_target" || e.outcome === "goal").length;
   const totalXG = shots.reduce((sum, e) => sum + (e.xg || 0), 0);
   const averageXG = shots.length > 0 ? totalXG / shots.length : 0;
 
-  const passes = events.filter((e) => e.type === "pass");
-  const successfulPasses = passes.filter((e) => {
-    const meta = parseMetadata(e.metadata);
-    return meta.outcome === "successful";
-  }).length;
-  const passAccuracy = passes.length > 0 ? (successfulPasses / passes.length) * 100 : 0;
+  const successfulPassesCount = successfulPasses.length;
+  const passAccuracy = passes.length > 0 ? (successfulPassesCount / passes.length) * 100 : 0;
 
-  const touches = events.filter((e) => e.type === "touch").length;
-  const tackles = events.filter((e) => e.type === "tackle").length;
-  const interceptions = events.filter((e) => e.type === "interception").length;
-  const clearances = events.filter((e) => e.type === "clearance").length;
-  const blocks = events.filter((e) => e.type === "block").length;
-  const fouls = events.filter((e) => e.type === "foul").length;
+  const touches = parsedEvents.filter((e) => e.type === "touch").length;
+  const tackles = parsedEvents.filter((e) => e.type === "tackle").length;
+  const interceptions = parsedEvents.filter((e) => e.type === "interception").length;
+  const clearances = parsedEvents.filter((e) => e.type === "clearance").length;
+  const blocks = parsedEvents.filter((e) => e.type === "block").length;
+  const fouls = parsedEvents.filter((e) => e.type === "foul").length;
   
-  // Calculate key passes (passes that lead to shots)
-  const keyPasses = passes.filter((p) => {
-    return shots.some(
-      (s) =>
-        s.matchId === p.matchId &&
-        s.minute !== null &&
-        p.minute !== null &&
-        s.minute > p.minute &&
-        s.minute <= p.minute + 1
-    );
-  }).length;
+  let keyPasses = 0;
+  let xA = 0;
+  for (const pass of passes) {
+    if (pass.minute === null) continue;
+    const resultingShot = (shotsByMatchAndMinute.get(pass.matchId)?.get(pass.minute + 1) || [])[0];
+    if (resultingShot) {
+      keyPasses += 1;
+      xA += resultingShot.xg || 0;
+    }
+  }
 
   // Calculate progressive passes (passes that advance the ball significantly)
   // A pass is progressive if it moves the ball into the final third (y < 33.33)
   // or if it has end coordinates and moves forward significantly
   const progressivePasses = passes.filter((p) => {
     if (p.x === null || p.y === null) return false;
-    const pMeta = parseMetadata(p.metadata);
+    const pMeta = p.parsedMetadata;
     if (pMeta.outcome !== "successful") return false;
     
     // Check if pass is into final third (most common progressive pass)
     if (p.y < 33.33) return true;
     
     // Check if pass has end coordinates and moves forward significantly
-    if (pMeta.endX !== undefined && pMeta.endY !== undefined) {
-      const forwardDistance = p.y - pMeta.endY; // Forward = lower y value
+    const endY = typeof pMeta.endY === "number" ? pMeta.endY : null;
+    if (endY !== null) {
+      const forwardDistance = p.y - endY; // Forward = lower y value
       if (forwardDistance >= 10) return true; // At least 10% forward
     }
     
@@ -191,25 +193,27 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   // Passes into final third (y < 33.33)
   const passesIntoFinalThird = passes.filter((p) => {
     if (p.y === null) return false;
-    const pMeta = parseMetadata(p.metadata);
+    const pMeta = p.parsedMetadata;
     return pMeta.outcome === "successful" && p.y < 33.33;
   }).length;
 
   // Passes into penalty area (y < ~15.7, which is approximately the penalty area line)
   const passesIntoPenaltyArea = passes.filter((p) => {
     if (p.y === null) return false;
-    const pMeta = parseMetadata(p.metadata);
+    const pMeta = p.parsedMetadata;
     return pMeta.outcome === "successful" && p.y < 15.7;
   }).length;
 
   // Long passes (passes with distance > 30% of pitch)
   const longPasses = passes.filter((p) => {
     if (p.x === null || p.y === null) return false;
-    const pMeta = parseMetadata(p.metadata);
+    const pMeta = p.parsedMetadata;
     if (pMeta.outcome !== "successful") return false;
-    if (pMeta.endX !== undefined && pMeta.endY !== undefined) {
+    const endX = typeof pMeta.endX === "number" ? pMeta.endX : null;
+    const endY = typeof pMeta.endY === "number" ? pMeta.endY : null;
+    if (endX !== null && endY !== null) {
       const distance = Math.sqrt(
-        Math.pow((pMeta.endX - p.x), 2) + Math.pow((pMeta.endY - p.y), 2)
+        Math.pow((endX - p.x), 2) + Math.pow((endY - p.y), 2)
       );
       return distance > 30; // More than 30% of pitch
     }
@@ -218,61 +222,20 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   // Calculate assists
   let assists = 0;
-  const goalsByMatch = new Map<number, typeof shots>();
-  shots.filter((s) => {
-    const meta = parseMetadata(s.metadata);
-    return meta.outcome === "goal";
-  }).forEach((goal) => {
-    if (goal.matchId) {
-      if (!goalsByMatch.has(goal.matchId)) {
-        goalsByMatch.set(goal.matchId, []);
-      }
-      goalsByMatch.get(goal.matchId)!.push(goal);
-    }
-  });
-
   goalsByMatch.forEach((matchGoals, matchId) => {
+    const passesByMinute = successfulPassesByMatchAndMinute.get(matchId);
+    if (!passesByMinute) return;
+
     matchGoals.forEach((goal) => {
-      const assistPass = passes.find(
-        (p) => {
-          const pMeta = parseMetadata(p.metadata);
-          return (
-            p.matchId === matchId &&
-            p.minute !== null &&
-            goal.minute !== null &&
-            p.minute <= goal.minute &&
-            p.minute >= goal.minute - 2 &&
-            pMeta.outcome === "successful"
-          );
+      if (goal.minute === null) return;
+      for (let minute = goal.minute - 2; minute <= goal.minute; minute += 1) {
+        if ((passesByMinute.get(minute) || []).length > 0) {
+          assists += 1;
+          return;
         }
-      );
-      if (assistPass) assists++;
+      }
     });
   });
-
-  // Calculate xA
-  const xA = passes
-    .filter((p) => {
-      return shots.some(
-        (s) =>
-          s.matchId === p.matchId &&
-          s.minute !== null &&
-          p.minute !== null &&
-          s.minute > p.minute &&
-          s.minute <= p.minute + 1
-      );
-    })
-    .reduce((sum, p) => {
-      const resultingShot = shots.find(
-        (s) =>
-          s.matchId === p.matchId &&
-          s.minute !== null &&
-          p.minute !== null &&
-          s.minute > p.minute &&
-          s.minute <= p.minute + 1
-      );
-      return sum + (resultingShot?.xg || 0);
-    }, 0);
 
   // Per 90 normalization
   const normalizePer90 = (value: number) => {
@@ -290,7 +253,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     averageXG: Math.round(averageXG * 100) / 100,
     xA: Math.round(xA * 100) / 100,
     passes: passes.length,
-    successfulPasses,
+    successfulPasses: successfulPassesCount,
     passAccuracy: Math.round(passAccuracy * 10) / 10,
     keyPasses,
     progressivePasses,
@@ -329,7 +292,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   } catch (error) {
     console.error("[players/[id].GET] Error:", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Internal server error" },
+      { ok: false, message: "Failed to fetch player" },
       { status: 500 }
     );
   }
@@ -361,7 +324,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ ok: false, message: "Invalid body" }, { status: 400 });
   }
 
-  const updateData: any = {};
+  const updateData: Prisma.PlayerUncheckedUpdateInput = {};
   if (body.name !== undefined) updateData.name = body.name;
   if (body.position !== undefined) updateData.position = body.position;
   if (body.age !== undefined) updateData.age = body.age;
@@ -375,19 +338,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (body.xg !== undefined) updateData.xg = body.xg;
   if (body.xag !== undefined) updateData.xag = body.xag;
 
-  // Try to find by slug first, then by id
-  let player = await prisma.player.findUnique({
-    where: { slug: id },
-  });
-
-  if (!player) {
-    const numericId = parseInt(id);
-    if (!isNaN(numericId)) {
-      player = await prisma.player.findUnique({
-        where: { id: numericId },
-      });
-    }
+  const { numericId, invalidNumeric } = parseNumericRouteId(id);
+  if (invalidNumeric) {
+    return NextResponse.json({ ok: false, message: "Invalid player ID" }, { status: 400 });
   }
+
+  const player = await prisma.player.findFirst({
+    where: {
+      OR: [{ slug: id }, ...(numericId !== null ? [{ id: numericId }] : [])],
+    },
+  });
 
   if (!player) {
     return NextResponse.json({ ok: false, message: "Player not found" }, { status: 404 });
@@ -415,19 +375,16 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 
     const { id } = await params;
     
-    // Try to find by slug first, then by id
-    let player = await prisma.player.findUnique({
-      where: { slug: id },
-    });
-
-    if (!player) {
-      const numericId = parseInt(id);
-      if (!isNaN(numericId)) {
-        player = await prisma.player.findUnique({
-          where: { id: numericId },
-        });
-      }
+    const { numericId, invalidNumeric } = parseNumericRouteId(id);
+    if (invalidNumeric) {
+      return NextResponse.json({ ok: false, message: "Invalid player ID" }, { status: 400 });
     }
+
+    const player = await prisma.player.findFirst({
+      where: {
+        OR: [{ slug: id }, ...(numericId !== null ? [{ id: numericId }] : [])],
+      },
+    });
 
     if (!player) {
       return NextResponse.json({ ok: false, message: "Player not found" }, { status: 404 });
@@ -439,9 +396,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   } catch (error) {
     console.error("[players/[id].DELETE] Error:", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Internal server error" },
+      { ok: false, message: "Failed to delete player" },
       { status: 500 }
     );
   }
 }
-

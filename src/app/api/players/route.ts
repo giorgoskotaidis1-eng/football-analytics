@@ -1,218 +1,128 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { getUserTeamIds } from "@/lib/user-teams";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   try {
-    // Get current user to filter by their teams
     const user = await getCurrentUser();
-    
     const searchParams = request.nextUrl.searchParams;
     const teamId = searchParams.get("teamId");
-    const searchParam = searchParams.get("search");
-    
-    // Pagination parameters (like Instat/Wyscout)
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "50"); // Default 50 per page
+    const searchParam = searchParams.get("search")?.trim() || "";
+
+    const rawPage = Number.parseInt(searchParams.get("page") || "", 10);
+    const rawLimit = Number.parseInt(searchParams.get("limit") || "", 10);
+    const page = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 50;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
-    
-    // Filter by user's teams if user is logged in
+    const andFilters: Prisma.PlayerWhereInput[] = [];
+
     if (user) {
-      // Get user's team IDs
-      const userTeams = await prisma.userTeam.findMany({
-        where: { userId: user.id, status: "active" },
-        select: { teamId: true },
-      });
-      
-      const createdTeams = await prisma.team.findMany({
-        where: { createdById: user.id },
-        select: { id: true },
-      });
-      
-      const userTeamIds = [
-        ...userTeams.map((ut) => ut.teamId),
-        ...createdTeams.map((t) => t.id),
-      ];
+      const userTeamIds = await getUserTeamIds(user.id);
 
       if (userTeamIds.length > 0) {
-        // If specific teamId requested, verify it belongs to user
         if (teamId) {
-          const requestedTeamId = parseInt(teamId);
+          const requestedTeamId = Number.parseInt(teamId, 10);
+          if (!Number.isFinite(requestedTeamId) || requestedTeamId <= 0) {
+            return NextResponse.json({ ok: false, message: "Invalid teamId" }, { status: 400 });
+          }
           if (userTeamIds.includes(requestedTeamId)) {
-            where.teamId = requestedTeamId;
+            andFilters.push({ teamId: requestedTeamId });
           } else {
-            // User doesn't have access to this team
             return NextResponse.json({ ok: true, players: [], pagination: { page: 1, limit, total: 0, totalPages: 0, hasMore: false } });
           }
         } else {
-          // Show players from all user's teams
-          where.teamId = { in: userTeamIds };
+          andFilters.push({ teamId: { in: userTeamIds } });
         }
       } else {
-        // User has no teams - return empty
         return NextResponse.json({ ok: true, players: [], pagination: { page: 1, limit, total: 0, totalPages: 0, hasMore: false } });
       }
     } else if (teamId) {
-      // Public access with specific teamId
-      where.teamId = parseInt(teamId);
-    }
-    
-    // Note: SQLite doesn't support case-insensitive search with mode: "insensitive"
-    // We'll filter in memory after fetching if search is provided
-    const shouldFilterInMemory = searchParam && searchParam.trim();
-
-    // If no filters, get ALL players
-    // Only log verbose info if limit > 1 (not a stats request)
-    const isStatsRequest = limit === 1;
-    if (!isStatsRequest) {
-      console.log(`[players.GET] Pagination: page=${page}, limit=${limit}, skip=${skip}`);
-      console.log(`[players.GET] Where clause:`, JSON.stringify(where));
-      console.log(`[players.GET] Will filter in memory:`, shouldFilterInMemory);
+      const publicTeamId = Number.parseInt(teamId, 10);
+      if (!Number.isFinite(publicTeamId) || publicTeamId <= 0) {
+        return NextResponse.json({ ok: false, message: "Invalid teamId" }, { status: 400 });
+      }
+      andFilters.push({ teamId: publicTeamId });
     }
 
-    // Build query - if where is empty, don't pass it at all
-    const queryOptions: any = {
-      include: {
-        team: {
-          select: { id: true, name: true },
-        },
-        matchEvents: {
-          select: {
-            matchId: true,
-            minute: true,
+    if (searchParam) {
+      andFilters.push({
+        OR: [
+          { name: { contains: searchParam, mode: "insensitive" } },
+          { position: { contains: searchParam, mode: "insensitive" } },
+          { club: { contains: searchParam, mode: "insensitive" } },
+          { team: { name: { contains: searchParam, mode: "insensitive" } } },
+        ],
+      });
+    }
+
+    const where = andFilters.length > 0 ? { AND: andFilters } : undefined;
+    const [totalCount, players] = await Promise.all([
+      prisma.player.count({ where }),
+      prisma.player.findMany({
+        where,
+        include: {
+          team: {
+            select: { id: true, name: true },
           },
         },
-      },
-      orderBy: { id: "desc" },
-      skip,
-      take: limit,
-    };
+        orderBy: { id: "desc" },
+        skip,
+        take: limit,
+      }),
+    ]);
 
-    // Only add where clause if there are actual filters
-    if (Object.keys(where).length > 0) {
-      queryOptions.where = where;
-      if (!isStatsRequest) {
-        console.log(`[players.GET] Applying WHERE filter:`, JSON.stringify(where));
-      }
-    } else {
-      if (!isStatsRequest) {
-        console.log(`[players.GET] No filters - fetching paginated players`);
-      }
+    const playerIds = players.map((player) => player.id);
+    const playerMatchMinutes =
+      playerIds.length > 0
+        ? await prisma.matchEvent.groupBy({
+            by: ["playerId", "matchId"],
+            where: {
+              playerId: { in: playerIds },
+            },
+            _max: { minute: true },
+          })
+        : [];
+
+    const statByPlayerId = new Map<number, { matchesCount: number; totalGameTime: number }>();
+    for (const row of playerMatchMinutes) {
+      if (!row.playerId) continue;
+      const existing = statByPlayerId.get(row.playerId) || { matchesCount: 0, totalGameTime: 0 };
+      existing.matchesCount += 1;
+      existing.totalGameTime += row._max.minute ?? 0;
+      statByPlayerId.set(row.playerId, existing);
     }
 
-    // Get total count for pagination (before filtering)
-    const totalCount = await prisma.player.count({
-      where: Object.keys(where).length > 0 ? where : undefined,
-    });
-
-    const players = await prisma.player.findMany(queryOptions);
-    
-    // Double-check: if we got 0 players but there should be players, log warning
-    if (players.length === 0 && Object.keys(where).length === 0) {
-      const totalCount = await prisma.player.count();
-      if (totalCount > 0) {
-        console.error(`[players.GET] ERROR: Query returned 0 players but database has ${totalCount} players!`);
-      }
-    }
-
-    if (!isStatsRequest) {
-      console.log(`[players.GET] Query options:`, JSON.stringify({ 
-        hasWhere: !!queryOptions.where, 
-        where: queryOptions.where,
-        orderBy: queryOptions.orderBy 
-      }));
-      console.log(`[players.GET] Found ${players.length} players in database`);
-      if (players.length > 0) {
-        console.log(`[players.GET] Player IDs:`, players.map((p: any) => ({ id: p.id, name: p.name, slug: p.slug })));
-      }
-    }
-    
-    if (players.length === 0 && !isStatsRequest) {
-      console.warn(`[players.GET] No players found! Where clause:`, JSON.stringify(where));
-      // Try to get count of all players without filters
-      const totalCount = await prisma.player.count();
-      console.warn(`[players.GET] Total players in database: ${totalCount}`);
-      if (totalCount > 0 && Object.keys(where).length > 0) {
-        console.warn(`[players.GET] WARNING: Filters are excluding all players! Total in DB: ${totalCount}, but query returned 0`);
-      }
-    }
-    
-    // Calculate matches and game time for each player
-    const playersWithStats = players.map((player: any) => {
-      const { matchEvents, ...playerWithoutEvents } = player;
-      
-      // Get unique match IDs
-      const uniqueMatchIds = new Set(matchEvents.map((e: any) => e.matchId));
-      const matchesCount = uniqueMatchIds.size;
-
-      // Calculate total game time (max minute from each match)
-      const matchMinutes = new Map<number, number>();
-      matchEvents.forEach((event: any) => {
-        if (event.minute !== null) {
-          const currentMax = matchMinutes.get(event.matchId) || 0;
-          matchMinutes.set(event.matchId, Math.max(currentMax, event.minute));
-        }
-      });
-      const totalGameTime = Array.from(matchMinutes.values()).reduce((sum, min) => sum + min, 0);
-
+    const playersWithStats = players.map((player) => {
+      const stats = statByPlayerId.get(player.id) || { matchesCount: 0, totalGameTime: 0 };
       return {
-        ...playerWithoutEvents,
-        id: player.id, // Ensure id is always included
-        matchesCount,
-        totalGameTime,
+        ...player,
+        matchesCount: stats.matchesCount,
+        totalGameTime: stats.totalGameTime,
       };
     });
 
-    // Apply search filter in memory if needed (SQLite limitation)
-    let finalPlayers = playersWithStats;
-    if (shouldFilterInMemory) {
-      const searchTerm = searchParam!.toLowerCase().trim();
-      finalPlayers = playersWithStats.filter((player: any) => {
-        const nameMatch = player.name?.toLowerCase().includes(searchTerm);
-        const positionMatch = player.position?.toLowerCase().includes(searchTerm);
-        const clubMatch = player.club?.toLowerCase().includes(searchTerm);
-        const teamMatch = player.team?.name?.toLowerCase().includes(searchTerm);
-        return nameMatch || positionMatch || clubMatch || teamMatch;
-      });
-      if (!isStatsRequest) {
-        console.log(`[players.GET] After in-memory filter: ${finalPlayers.length} players`);
-      }
-    }
-
-    if (!isStatsRequest) {
-      console.log(`[players.GET] Returning ${finalPlayers.length} players with stats`);
-      console.log(`[players.GET] Total count: ${totalCount}, Filtered: ${shouldFilterInMemory}, Final: ${finalPlayers.length}`);
-      if (finalPlayers.length > 0 && finalPlayers.length <= 10) {
-        console.log(`[players.GET] Returning player IDs:`, finalPlayers.map((p: any) => ({ id: p.id, name: p.name })));
-      }
-    }
-    
-    // Return pagination info (like Instat/Wyscout)
     const paginationInfo = {
       page,
       limit,
-      total: shouldFilterInMemory ? finalPlayers.length : totalCount, // If filtered, use filtered count
-      totalPages: Math.ceil((shouldFilterInMemory ? finalPlayers.length : totalCount) / limit),
-      hasMore: page * limit < (shouldFilterInMemory ? finalPlayers.length : totalCount),
+      total: totalCount,
+      totalPages: Math.ceil(totalCount / limit),
+      hasMore: page * limit < totalCount,
     };
-    
-    if (!isStatsRequest) {
-      console.log(`[players.GET] Pagination info:`, paginationInfo);
-    }
-    
-    return NextResponse.json({ 
-      ok: true, 
-      players: finalPlayers,
-      pagination: paginationInfo
+
+    return NextResponse.json({
+      ok: true,
+      players: playersWithStats,
+      pagination: paginationInfo,
     });
   } catch (error) {
     console.error("[players.GET] Error:", error);
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Internal server error" },
+      { ok: false, message: "Failed to fetch players" },
       { status: 500 }
     );
   }
@@ -275,7 +185,7 @@ export async function POST(request: NextRequest) {
   // If slug still exists, add a number suffix
   let slug = slugBase;
   let counter = 1;
-  let maxAttempts = 100; // Prevent infinite loop
+  const maxAttempts = 100; // Prevent infinite loop
   while (counter < maxAttempts) {
     const existing = await prisma.player.findUnique({ where: { slug } });
     if (!existing) break;
@@ -314,11 +224,11 @@ export async function POST(request: NextRequest) {
   });
 
   // Calculate matches and game time for the new player (same logic as GET)
-  const uniqueMatchIds = new Set(player.matchEvents.map((e: any) => e.matchId));
+  const uniqueMatchIds = new Set(player.matchEvents.map((e) => e.matchId));
   const matchesCount = uniqueMatchIds.size;
 
   const matchMinutes = new Map<number, number>();
-  player.matchEvents.forEach((event: any) => {
+  player.matchEvents.forEach((event) => {
     if (event.minute !== null) {
       const currentMax = matchMinutes.get(event.matchId) || 0;
       matchMinutes.set(event.matchId, Math.max(currentMax, event.minute));
@@ -335,4 +245,3 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ ok: true, player: playerWithStats }, { status: 201 });
 }
-

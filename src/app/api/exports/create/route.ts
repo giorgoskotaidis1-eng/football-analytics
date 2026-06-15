@@ -7,6 +7,7 @@ import { existsSync } from "fs";
 import Papa from "papaparse";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { getUserTeamIds } from "@/lib/user-teams";
 
 export const runtime = "nodejs";
 
@@ -22,34 +23,25 @@ export async function POST(request: NextRequest) {
     const format = searchParams.get("format") || "csv";
     const matchId = searchParams.get("matchId");
 
-    // Get user's team IDs to filter
-    const userTeams = await prisma.userTeam.findMany({
-      where: { userId: user.id, status: "active" },
-      select: { teamId: true },
-    });
-    
-    const createdTeams = await prisma.team.findMany({
-      where: { createdById: user.id },
-      select: { id: true },
-    });
-    
-    const userTeamIds = [
-      ...userTeams.map((ut) => ut.teamId),
-      ...createdTeams.map((t) => t.id),
-    ];
+    const userTeamIds = await getUserTeamIds(user.id);
 
     if (userTeamIds.length === 0) {
       return NextResponse.json({ ok: false, message: "No teams found. Create a team first." }, { status: 400 });
     }
 
-    let data: any[] = [];
+    let data: Array<Record<string, unknown>> = [];
     let filename = "";
 
     if (source === "matches") {
       if (matchId) {
         // Export single match events
+        const parsedMatchId = Number.parseInt(matchId, 10);
+        if (!Number.isFinite(parsedMatchId) || parsedMatchId <= 0) {
+          return NextResponse.json({ ok: false, message: "Invalid match ID" }, { status: 400 });
+        }
+
         const match = await prisma.match.findUnique({
-          where: { id: parseInt(matchId) },
+          where: { id: parsedMatchId },
           include: {
             homeTeam: true,
             awayTeam: true,
@@ -81,7 +73,7 @@ export async function POST(request: NextRequest) {
           xg: event.xg,
           metadata: event.metadata,
         }));
-        filename = `match-${matchId}-events`;
+        filename = `match-${parsedMatchId}-events`;
       } else {
         // Export all matches from user's teams
         const matches = await prisma.match.findMany({
@@ -435,4 +427,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

@@ -1,12 +1,28 @@
-import { SignJWT, jwtVerify } from "jose";
+import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { cookies } from "next/headers";
 import { prisma } from "./prisma";
 
+const MIN_JWT_SECRET_LENGTH = 32;
+const isProduction = process.env.NODE_ENV === "production";
+const configuredSecret = process.env.JWT_SECRET?.trim();
+
+if (isProduction && (!configuredSecret || configuredSecret.length < MIN_JWT_SECRET_LENGTH)) {
+  throw new Error("JWT_SECRET must be set and at least 32 characters in production");
+}
+
+if (!isProduction && (!configuredSecret || configuredSecret.length < MIN_JWT_SECRET_LENGTH)) {
+  console.warn(
+    "[auth] JWT_SECRET is missing or too short in development; using insecure development fallback secret."
+  );
+}
+
 const SECRET_KEY = new TextEncoder().encode(
-  process.env.JWT_SECRET || "your-secret-key-change-in-production-min-32-chars"
+  configuredSecret && configuredSecret.length >= MIN_JWT_SECRET_LENGTH
+    ? configuredSecret
+    : "development-only-jwt-secret-change-before-production-32+"
 );
 
-export interface SessionPayload {
+export interface SessionPayload extends JWTPayload {
   userId: number;
   email: string;
   name: string | null;
@@ -26,7 +42,7 @@ export async function createSession(payload: SessionPayload, expirationDays: num
 export async function verifySession(token: string): Promise<SessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, SECRET_KEY);
-    return payload as SessionPayload;
+    return payload as unknown as SessionPayload;
   } catch {
     return null;
   }
@@ -82,4 +98,3 @@ export async function getCurrentUser() {
     return null; // Return null on error instead of throwing
   }
 }
-

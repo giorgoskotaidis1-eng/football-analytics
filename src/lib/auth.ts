@@ -3,25 +3,40 @@ import { cookies } from "next/headers";
 import { prisma } from "./prisma";
 
 const MIN_JWT_SECRET_LENGTH = 32;
-const isProduction = process.env.NODE_ENV === "production";
-const configuredSecret = process.env.JWT_SECRET?.trim();
-const isSecretInvalid = !configuredSecret || configuredSecret.length < MIN_JWT_SECRET_LENGTH;
+const DEV_FALLBACK_SECRET = "development-only-jwt-secret-change-before-production-32+";
 
-if (isProduction && isSecretInvalid) {
-  throw new Error("JWT_SECRET must be set and at least 32 characters in production");
-}
+let cachedSecretKey: Uint8Array | null = null;
+let hasWarnedAboutDevSecret = false;
 
-if (!isProduction && isSecretInvalid) {
-  console.warn(
-    "[auth] JWT_SECRET is missing or too short in development; using insecure development fallback secret."
+// Resolve the signing key lazily (at request time) rather than at module load.
+// Evaluating this at import time breaks `next build` page-data collection, which
+// runs with NODE_ENV=production but without the real JWT_SECRET available.
+function getSecretKey(): Uint8Array {
+  if (cachedSecretKey) {
+    return cachedSecretKey;
+  }
+
+  const isProduction = process.env.NODE_ENV === "production";
+  const configuredSecret = process.env.JWT_SECRET?.trim();
+  const isSecretInvalid = !configuredSecret || configuredSecret.length < MIN_JWT_SECRET_LENGTH;
+
+  if (isProduction && isSecretInvalid) {
+    throw new Error("JWT_SECRET must be set and at least 32 characters in production");
+  }
+
+  if (!isProduction && isSecretInvalid && !hasWarnedAboutDevSecret) {
+    hasWarnedAboutDevSecret = true;
+    console.warn(
+      "[auth] JWT_SECRET is missing or too short in development; using insecure development fallback secret."
+    );
+  }
+
+  cachedSecretKey = new TextEncoder().encode(
+    !isSecretInvalid ? (configuredSecret as string) : DEV_FALLBACK_SECRET
   );
-}
 
-const SECRET_KEY = new TextEncoder().encode(
-  configuredSecret && configuredSecret.length >= MIN_JWT_SECRET_LENGTH
-    ? configuredSecret
-    : "development-only-jwt-secret-change-before-production-32+"
-);
+  return cachedSecretKey;
+}
 
 export interface SessionPayload extends JWTPayload {
   userId: number;
@@ -35,14 +50,14 @@ export async function createSession(payload: SessionPayload, expirationDays: num
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${expirationDays}d`)
-    .sign(SECRET_KEY);
+    .sign(getSecretKey());
 
   return token;
 }
 
 export async function verifySession(token: string): Promise<SessionPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, SECRET_KEY);
+    const { payload } = await jwtVerify(token, getSecretKey());
     return payload as unknown as SessionPayload;
   } catch {
     return null;

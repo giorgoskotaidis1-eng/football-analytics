@@ -92,7 +92,17 @@ export async function GET(
       });
 
     // Get manually curated highlights (from admin)
-    let manualHighlights: Array<{
+    const manualRows = await prisma.playerHighlight.findMany({
+      where: { playerId },
+      include: {
+        match: {
+          select: { id: true, date: true, competition: true, videoPath: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const manualHighlights: Array<{
       id: string;
       description: string;
       timestamp: number;
@@ -104,48 +114,21 @@ export async function GET(
       matchDate?: string;
       competition?: string;
       includeHeatmap?: boolean;
-    }> = [];
-
-    try {
-      // Table may not exist yet – ignore errors here
-      const rows = await prisma.$queryRawUnsafe<
-        Array<{
-          id: number;
-          playerId: number;
-          matchId: number;
-          timestamp: number;
-          description: string;
-          outcome: string | null;
-          includeHeatmap: number | null;
-        }>
-      >(
-        `
-        SELECT id, playerId, matchId, timestamp, description, outcome, includeHeatmap
-        FROM PlayerHighlight
-        WHERE playerId = ?
-        ORDER BY createdAt DESC
-      `,
-        playerId,
-      );
-
-      manualHighlights =
-        rows?.map((row) => ({
-          id: `manual-${row.id}`,
-          description: row.description,
-          timestamp: row.timestamp ?? 0,
-          outcome: row.outcome || "Highlight",
-          x: 0,
-          y: 0,
-          videoUrl: `/api/matches/${row.matchId}/video?t=${row.timestamp ?? 0}`,
-          matchId: row.matchId,
-          matchDate: undefined,
-          competition: undefined,
-          includeHeatmap: row.includeHeatmap === 1,
-        })) ?? [];
-    } catch (err) {
-      // If the table doesn't exist yet, just skip manual highlights
-      console.warn("[player-highlights] Manual highlights table missing or query failed:", err);
-    }
+    }> = manualRows.map((row) => ({
+      id: `manual-${row.id}`,
+      description: row.description,
+      timestamp: row.timestamp ?? 0,
+      outcome: row.outcome || "Highlight",
+      x: 0,
+      y: 0,
+      videoUrl: row.match.videoPath
+        ? `/api/matches/${row.match.id}/video?t=${row.timestamp ?? 0}`
+        : undefined,
+      matchId: row.match.id,
+      matchDate: row.match.date.toISOString(),
+      competition: row.match.competition,
+      includeHeatmap: row.includeHeatmap,
+    }));
 
     const highlights = [...manualHighlights, ...autoHighlights];
 
@@ -161,4 +144,3 @@ export async function GET(
     );
   }
 }
-

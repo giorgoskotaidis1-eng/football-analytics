@@ -58,12 +58,13 @@ export async function POST(
 
     const passwordHash = hashPassword(body.password);
 
-    await prisma.$executeRawUnsafe(
-      `UPDATE Player SET email = ?, passwordHash = ? WHERE id = ?`,
-      email,
-      passwordHash,
-      playerId,
-    );
+    await prisma.player.update({
+      where: { id: playerId },
+      data: {
+        email,
+        passwordHash,
+      },
+    });
 
     return NextResponse.json({ ok: true, message: "Player account updated" });
   } catch (error) {
@@ -74,7 +75,6 @@ export async function POST(
     );
   }
 }
-
 
 
 

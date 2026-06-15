@@ -86,34 +86,39 @@ export async function POST(request: NextRequest) {
       const carriesIntoFinalThirdPer90 = carriesIndex !== -1 ? parseFloat(values[carriesIndex]) || 0 : null;
       const defensiveDuelsWonPer90 = defensiveDuelsIndex !== -1 ? parseFloat(values[defensiveDuelsIndex]) || 0 : null;
 
-      // Update player stats using raw SQL
+      // Update player stats (only overwrite values provided by CSV columns)
       try {
-        await prisma.$executeRawUnsafe(
-          `UPDATE Player SET 
-            goals = COALESCE(?, goals),
-            assists = COALESCE(?, assists),
-            xg = COALESCE(?, xg),
-            xag = COALESCE(?, xag),
-            shotsPer90 = COALESCE(?, shotsPer90),
-            keyPassesPer90 = COALESCE(?, keyPassesPer90),
-            pressuresPer90 = COALESCE(?, pressuresPer90),
-            progressivePassesPer90 = COALESCE(?, progressivePassesPer90),
-            carriesIntoFinalThirdPer90 = COALESCE(?, carriesIntoFinalThirdPer90),
-            defensiveDuelsWonPer90 = COALESCE(?, defensiveDuelsWonPer90),
-            updatedAt = CURRENT_TIMESTAMP
-          WHERE id = ?`,
-          goals,
-          assists,
-          xg,
-          xag,
-          shotsPer90,
-          keyPassesPer90,
-          pressuresPer90,
-          progressivePassesPer90,
-          carriesIntoFinalThirdPer90,
-          defensiveDuelsWonPer90,
-          playerId
-        );
+        const data: {
+          goals?: number;
+          assists?: number;
+          xg?: number;
+          xag?: number;
+          shotsPer90?: number;
+          keyPassesPer90?: number;
+          pressuresPer90?: number;
+          progressivePassesPer90?: number;
+          carriesIntoFinalThirdPer90?: number;
+          defensiveDuelsWonPer90?: number;
+          updatedAt: Date;
+        } = {
+          updatedAt: new Date(),
+        };
+
+        if (goals !== null) data.goals = goals;
+        if (assists !== null) data.assists = assists;
+        if (xg !== null) data.xg = xg;
+        if (xag !== null) data.xag = xag;
+        if (shotsPer90 !== null) data.shotsPer90 = shotsPer90;
+        if (keyPassesPer90 !== null) data.keyPassesPer90 = keyPassesPer90;
+        if (pressuresPer90 !== null) data.pressuresPer90 = pressuresPer90;
+        if (progressivePassesPer90 !== null) data.progressivePassesPer90 = progressivePassesPer90;
+        if (carriesIntoFinalThirdPer90 !== null) data.carriesIntoFinalThirdPer90 = carriesIntoFinalThirdPer90;
+        if (defensiveDuelsWonPer90 !== null) data.defensiveDuelsWonPer90 = defensiveDuelsWonPer90;
+
+        await prisma.player.update({
+          where: { id: playerId },
+          data,
+        });
         updated++;
       } catch (error) {
         errors.push(`Row ${i + 1}: Failed to update player ${playerId}`);
@@ -134,7 +139,6 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
 
 
 

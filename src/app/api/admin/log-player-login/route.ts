@@ -18,13 +18,15 @@ export async function POST(request: NextRequest) {
     const playerId = body.playerId;
     const timestamp = body.timestamp ? new Date(body.timestamp) : new Date();
 
-    // Update player login status using raw SQL (workaround until Prisma client regenerates)
+    // Update player login status
     try {
-      await prisma.$executeRawUnsafe(
-        `UPDATE Player SET lastLoginAt = ?, isOnline = 1 WHERE id = ?`,
-        timestamp.toISOString(),
-        playerId
-      );
+      await prisma.player.update({
+        where: { id: playerId },
+        data: {
+          lastLoginAt: timestamp,
+          isOnline: true,
+        },
+      });
     } catch (error) {
       console.error("[log-player-login] Failed to update player status:", error);
       throw error;
@@ -44,4 +46,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

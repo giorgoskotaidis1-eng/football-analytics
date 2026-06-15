@@ -59,14 +59,16 @@ export async function POST(request: Request) {
     let responseData;
 
     if (isPlayer && player) {
-      // Player login - log the login event using raw SQL (workaround until Prisma client regenerates)
+      // Player login - log the login event
       const loginTimestamp = new Date();
       try {
-        await prisma.$executeRawUnsafe(
-          `UPDATE Player SET lastLoginAt = ?, isOnline = 1 WHERE id = ?`,
-          loginTimestamp.toISOString(),
-          player.id
-        );
+        await prisma.player.update({
+          where: { id: player.id },
+          data: {
+            lastLoginAt: loginTimestamp,
+            isOnline: true,
+          },
+        });
       } catch (error) {
         console.error("[login] Failed to update player login status:", error);
         // Continue with login even if tracking fails

@@ -4,6 +4,7 @@ import { ThemeProvider } from "@/lib/theme";
 import { I18nProvider } from "@/lib/i18n";
 import { PWARegister } from "./components/PWARegister";
 import { ConditionalLayout } from "./components/ConditionalLayout";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: "Football Analytics Dashboard",
@@ -45,6 +46,7 @@ export default function RootLayout({
             <ConditionalLayout>{children}</ConditionalLayout>
           </I18nProvider>
         </ThemeProvider>
+        <Analytics />
       </body>
     </html>
   );

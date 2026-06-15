@@ -34,40 +34,25 @@ export async function GET(request: NextRequest) {
       ...createdTeams.map((t) => t.id),
     ];
 
-    // Build WHERE clause for team filtering
-    const teamFilter = userTeamIds.length > 0 
-      ? `AND p.teamId IN (${userTeamIds.join(',')})`
-      : `AND 1=0`; // No teams = no players
-    
-    // Use raw SQL query to get players with login tracking
-    // Filter by user's teams
-    const playersRaw = await prisma.$queryRawUnsafe<Array<{
-      id: number;
-      name: string;
-      email: string | null;
-      position: string;
-      number: number | null;
-      lastLoginAt: Date | null;
-      isOnline: number; // SQLite returns 0/1
-      teamId: number | null;
-      teamName: string | null;
-    }>>(`
-      SELECT 
-        p.id,
-        p.name,
-        p.email,
-        p.position,
-        p.number,
-        p.lastLoginAt,
-        p.isOnline,
-        t.id as teamId,
-        t.name as teamName
-      FROM Player p
-      LEFT JOIN Team t ON p.teamId = t.id
-      WHERE p.email IS NOT NULL
-      ${teamFilter}
-      ORDER BY p.isOnline DESC, p.lastLoginAt DESC
-    `);
+    if (userTeamIds.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        players: [],
+      });
+    }
+
+    const playersRaw = await prisma.player.findMany({
+      where: {
+        email: { not: null },
+        teamId: { in: userTeamIds },
+      },
+      include: {
+        team: {
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: [{ isOnline: "desc" }, { lastLoginAt: "desc" }],
+    });
 
     const players = playersRaw.map((p) => ({
       id: p.id,
@@ -76,8 +61,8 @@ export async function GET(request: NextRequest) {
       position: p.position,
       number: p.number,
       lastLoginAt: p.lastLoginAt,
-      isOnline: p.isOnline === 1,
-      team: p.teamId && p.teamName ? { id: p.teamId, name: p.teamName } : null,
+      isOnline: p.isOnline,
+      team: p.team,
     }));
 
     return NextResponse.json({
@@ -102,4 +87,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

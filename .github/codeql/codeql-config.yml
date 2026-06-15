@@ -1,0 +1,13 @@
+name: "CodeQL Config"
+
+paths:
+  - src
+  - prisma
+
+paths-ignore:
+  - src/generated
+  - node_modules
+  - .next
+  - scripts
+  - "**/*.md"
+  - "**/*.bat"

@@ -32,36 +32,17 @@ export async function POST(req: NextRequest) {
 
     const ts = Math.max(0, Math.floor(timestamp));
 
-    // Ensure backing table exists (raw SQLite) – avoids schema regeneration issues
-    await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS PlayerHighlight (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        playerId INTEGER NOT NULL,
-        matchId INTEGER NOT NULL,
-        timestamp INTEGER NOT NULL,
-        description TEXT NOT NULL,
-        outcome TEXT,
-        includeHeatmap INTEGER NOT NULL DEFAULT 0,
-        createdById INTEGER,
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    await prisma.$executeRawUnsafe(
-      `
-      INSERT INTO PlayerHighlight
-        (playerId, matchId, timestamp, description, outcome, includeHeatmap, createdById)
-      VALUES
-        (?, ?, ?, ?, ?, ?, ?)
-    `,
-      Number(playerId),
-      Number(matchId),
-      ts,
-      String(description),
-      outcome ? String(outcome) : null,
-      includeHeatmap ? 1 : 0,
-      Number(user.id),
-    );
+    await prisma.playerHighlight.create({
+      data: {
+        playerId: Number(playerId),
+        matchId: Number(matchId),
+        timestamp: ts,
+        description: String(description),
+        outcome: outcome ? String(outcome) : null,
+        includeHeatmap: Boolean(includeHeatmap),
+        createdById: Number(user.id),
+      },
+    });
 
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -75,7 +56,6 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
 
 
 

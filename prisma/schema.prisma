@@ -51,6 +51,7 @@ model User {
   uploadedFiles    UploadedFile[]
   dataExports      DataExport[]
   supportTickets   SupportTicket[]
+  createdHighlights PlayerHighlight[] @relation("PlayerHighlightCreator")
 
   @@index([email])
   @@index([role])
@@ -116,6 +117,7 @@ model Player {
   matchEvents MatchEvent[]
   watchlist   WatchlistPlayer[]
   feedback    PlayerFeedback[]
+  highlights  PlayerHighlight[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -156,6 +158,7 @@ model Match {
   lineups        MatchLineup[]
   playlists      Playlist[]
   playlistClips  PlaylistClip[]
+  highlights     PlayerHighlight[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -204,6 +207,25 @@ model MatchEvent {
   @@index([minute])
   @@index([matchId, playerId])
   @@index([matchId, type])
+}
+
+model PlayerHighlight {
+  id             Int      @id @default(autoincrement())
+  playerId       Int
+  player         Player   @relation(fields: [playerId], references: [id])
+  matchId        Int
+  match          Match    @relation(fields: [matchId], references: [id])
+  timestamp      Int
+  description    String
+  outcome        String?
+  includeHeatmap Boolean  @default(false)
+  createdById    Int?
+  createdBy      User?    @relation("PlayerHighlightCreator", fields: [createdById], references: [id])
+  createdAt      DateTime @default(now())
+
+  @@index([playerId])
+  @@index([matchId])
+  @@index([createdById])
 }
 
 model Playlist {

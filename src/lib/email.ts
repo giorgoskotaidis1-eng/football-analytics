@@ -1,10 +1,19 @@
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Instantiate the Resend client lazily. Constructing it at module load throws
+// "Missing API key" when RESEND_API_KEY is unset, which breaks `next build`
+// page-data collection. It is only needed once an email is actually sent.
+let cachedResend: Resend | null = null;
+
+function getResend(): Resend {
+  if (!cachedResend) {
+    cachedResend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return cachedResend;
+}
 
 const FROM_EMAIL = process.env.FROM_EMAIL || "onboarding@resend.dev";
 const APP_NAME = process.env.APP_NAME || "Football Analytics";
-const APP_URL = resolveAppUrl();
 const SALES_EMAIL = process.env.SALES_EMAIL || "sales@footballanalytics.com";
 
 /**
@@ -55,7 +64,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ success: boole
   }
 
   try {
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await getResend().emails.send({
       from: FROM_EMAIL,
       to: options.to,
       subject: options.subject,
@@ -78,7 +87,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ success: boole
 // Email Templates
 
 export async function sendWelcomeEmail(email: string, name?: string) {
-  const welcomeUrl = `${APP_URL}/dashboard`;
+  const welcomeUrl = `${resolveAppUrl()}/dashboard`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -125,7 +134,7 @@ export async function sendWelcomeEmail(email: string, name?: string) {
 }
 
 export async function sendVerificationEmail(email: string, token: string, name?: string) {
-  const verificationUrl = `${APP_URL}/auth/verify?token=${token}`;
+  const verificationUrl = `${resolveAppUrl()}/auth/verify?token=${token}`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -173,7 +182,7 @@ export async function sendVerificationEmail(email: string, token: string, name?:
 }
 
 export async function sendPasswordResetEmail(email: string, token: string, name?: string) {
-  const resetUrl = `${APP_URL}/auth/reset-password?token=${token}`;
+  const resetUrl = `${resolveAppUrl()}/auth/reset-password?token=${token}`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -224,7 +233,7 @@ export async function sendPasswordResetEmail(email: string, token: string, name?
 }
 
 export async function sendPaymentReceiptEmail(email: string, amount: number, currency: string, invoiceId: string, name?: string) {
-  const billingUrl = `${APP_URL}/billing`;
+  const billingUrl = `${resolveAppUrl()}/billing`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -274,7 +283,7 @@ export async function sendPaymentReceiptEmail(email: string, amount: number, cur
 }
 
 export async function sendPaymentFailureEmail(email: string, reason: string, name?: string) {
-  const billingUrl = `${APP_URL}/billing`;
+  const billingUrl = `${resolveAppUrl()}/billing`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -333,7 +342,7 @@ export async function sendTeamInvitationEmail(
   invitationToken: string,
   recipientName?: string
 ) {
-  const acceptUrl = `${APP_URL}/auth/accept-invitation?token=${invitationToken}`;
+  const acceptUrl = `${resolveAppUrl()}/auth/accept-invitation?token=${invitationToken}`;
   const html = `
     <!DOCTYPE html>
     <html>

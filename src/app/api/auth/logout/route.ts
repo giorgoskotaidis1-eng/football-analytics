@@ -8,13 +8,13 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getSession();
     
-    // If it's a player, mark them as offline using raw SQL (workaround until Prisma client regenerates)
+    // If it's a player, mark them as offline
     if (session && session.role === "Player") {
       try {
-        await prisma.$executeRawUnsafe(
-          `UPDATE Player SET isOnline = 0 WHERE id = ?`,
-          session.userId
-        );
+        await prisma.player.update({
+          where: { id: session.userId },
+          data: { isOnline: false },
+        });
         console.log(`[logout] Player ${session.userId} logged out`);
       } catch (error) {
         console.error("[logout] Failed to update player offline status:", error);

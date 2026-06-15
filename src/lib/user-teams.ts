@@ -12,5 +12,6 @@ export async function getUserTeamIds(userId: number): Promise<number[]> {
     }),
   ]);
 
-  return Array.from(new Set([...userTeams.map((ut) => ut.teamId), ...createdTeams.map((t) => t.id)]));
+  const teamIds = [...userTeams.map((ut) => ut.teamId), ...createdTeams.map((t) => t.id)];
+  return Array.from(new Set(teamIds));
 }

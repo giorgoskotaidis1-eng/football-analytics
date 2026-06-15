@@ -5,12 +5,13 @@ import { prisma } from "./prisma";
 const MIN_JWT_SECRET_LENGTH = 32;
 const isProduction = process.env.NODE_ENV === "production";
 const configuredSecret = process.env.JWT_SECRET?.trim();
+const isSecretInvalid = !configuredSecret || configuredSecret.length < MIN_JWT_SECRET_LENGTH;
 
-if (isProduction && (!configuredSecret || configuredSecret.length < MIN_JWT_SECRET_LENGTH)) {
+if (isProduction && isSecretInvalid) {
   throw new Error("JWT_SECRET must be set and at least 32 characters in production");
 }
 
-if (!isProduction && (!configuredSecret || configuredSecret.length < MIN_JWT_SECRET_LENGTH)) {
+if (!isProduction && isSecretInvalid) {
   console.warn(
     "[auth] JWT_SECRET is missing or too short in development; using insecure development fallback secret."
   );

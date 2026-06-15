@@ -17,6 +17,13 @@ function parseSeasonRange(season: string): { start: Date; end: Date } | null {
   if (!match) return null;
   const startYear = Number.parseInt(match[1], 10);
   if (!Number.isFinite(startYear)) return null;
+  if (match[2]) {
+    const expectedShort = (startYear + 1).toString().slice(-2);
+    const expectedLong = (startYear + 1).toString();
+    if (match[2] !== expectedShort && match[2] !== expectedLong) {
+      return null;
+    }
+  }
   return {
     start: new Date(`${startYear}-07-01T00:00:00.000Z`),
     end: new Date(`${startYear + 1}-07-01T00:00:00.000Z`),

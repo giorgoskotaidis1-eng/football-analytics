@@ -17,7 +17,11 @@ export async function middleware(request: NextRequest) {
 
   const response = await updateSession(request);
   auth0Response.cookies.getAll().forEach((cookie) => {
-    response.cookies.set(cookie);
+    try {
+      response.cookies.set(cookie);
+    } catch (error) {
+      console.error("[middleware] Failed to merge Auth0 cookie:", cookie.name, error);
+    }
   });
 
   return response;

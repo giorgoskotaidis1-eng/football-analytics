@@ -1,10 +1,22 @@
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let _resend: Resend | null = null;
+function getResend(): Resend {
+  if (!_resend) {
+    _resend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return _resend;
+}
 
 const FROM_EMAIL = process.env.FROM_EMAIL || "onboarding@resend.dev";
 const APP_NAME = process.env.APP_NAME || "Football Analytics";
-const APP_URL = resolveAppUrl();
+let _appUrl: string | null = null;
+function getAppUrl(): string {
+  if (!_appUrl) {
+    _appUrl = resolveAppUrl();
+  }
+  return _appUrl;
+}
 const SALES_EMAIL = process.env.SALES_EMAIL || "sales@footballanalytics.com";
 
 /**
@@ -55,7 +67,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ success: boole
   }
 
   try {
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await getResend().emails.send({
       from: FROM_EMAIL,
       to: options.to,
       subject: options.subject,
@@ -78,7 +90,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ success: boole
 // Email Templates
 
 export async function sendWelcomeEmail(email: string, name?: string) {
-  const welcomeUrl = `${APP_URL}/dashboard`;
+  const welcomeUrl = `${getAppUrl()}/dashboard`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -125,7 +137,7 @@ export async function sendWelcomeEmail(email: string, name?: string) {
 }
 
 export async function sendVerificationEmail(email: string, token: string, name?: string) {
-  const verificationUrl = `${APP_URL}/auth/verify?token=${token}`;
+  const verificationUrl = `${getAppUrl()}/auth/verify?token=${token}`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -173,7 +185,7 @@ export async function sendVerificationEmail(email: string, token: string, name?:
 }
 
 export async function sendPasswordResetEmail(email: string, token: string, name?: string) {
-  const resetUrl = `${APP_URL}/auth/reset-password?token=${token}`;
+  const resetUrl = `${getAppUrl()}/auth/reset-password?token=${token}`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -224,7 +236,7 @@ export async function sendPasswordResetEmail(email: string, token: string, name?
 }
 
 export async function sendPaymentReceiptEmail(email: string, amount: number, currency: string, invoiceId: string, name?: string) {
-  const billingUrl = `${APP_URL}/billing`;
+  const billingUrl = `${getAppUrl()}/billing`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -274,7 +286,7 @@ export async function sendPaymentReceiptEmail(email: string, amount: number, cur
 }
 
 export async function sendPaymentFailureEmail(email: string, reason: string, name?: string) {
-  const billingUrl = `${APP_URL}/billing`;
+  const billingUrl = `${getAppUrl()}/billing`;
   const html = `
     <!DOCTYPE html>
     <html>
@@ -333,7 +345,7 @@ export async function sendTeamInvitationEmail(
   invitationToken: string,
   recipientName?: string
 ) {
-  const acceptUrl = `${APP_URL}/auth/accept-invitation?token=${invitationToken}`;
+  const acceptUrl = `${getAppUrl()}/auth/accept-invitation?token=${invitationToken}`;
   const html = `
     <!DOCTYPE html>
     <html>

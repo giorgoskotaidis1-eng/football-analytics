@@ -269,7 +269,12 @@ export default function SettingsPage() {
 
   async function handleLogout() {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      const data = (await res.json().catch(() => null)) as { redirectTo?: string | null } | null;
+      if (data?.redirectTo) {
+        window.location.href = data.redirectTo;
+        return;
+      }
     } catch {
       // ignore
     }

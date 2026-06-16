@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState, useTransition } from "react";
 import { AUTH0_LOGIN_PATH, SSO_COMPLETE_PATH } from "@/lib/auth0-routes";
 
 function GoogleIcon() {
@@ -15,7 +15,7 @@ function GoogleIcon() {
   );
 }
 
-export default function LoginPage() {
+function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -236,5 +236,13 @@ export default function LoginPage() {
         </a>
       </p>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginPageInner />
+    </Suspense>
   );
 }

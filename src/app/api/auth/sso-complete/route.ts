@@ -49,17 +49,25 @@ export async function GET(request: NextRequest) {
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (user) {
+    if (user.auth0Id && user.auth0Id !== auth0Id) {
+      console.warn("[sso-complete] Auth0 mismatch for user email:", email);
+      return redirectToLogin(request, "Google account mismatch for this email.");
+    }
+
     userId = user.id;
     name = user.name ?? auth0User.name ?? null;
     role = user.role ?? DEFAULT_USER_ROLE;
 
-    if (user.auth0Id !== auth0Id || (!user.name && auth0User.name)) {
+    const shouldLinkAuth0Id = !user.auth0Id;
+    const shouldBackfillName = !user.name && Boolean(auth0User.name);
+
+    if (shouldLinkAuth0Id || shouldBackfillName) {
       try {
         await prisma.user.update({
           where: { id: user.id },
           data: {
-            auth0Id,
-            ...(user.name ? {} : { name: auth0User.name ?? null }),
+            ...(shouldLinkAuth0Id ? { auth0Id } : {}),
+            ...(shouldBackfillName ? { name: auth0User.name ?? null } : {}),
           },
         });
       } catch (error) {
@@ -70,6 +78,11 @@ export async function GET(request: NextRequest) {
     const player = await prisma.player.findUnique({ where: { email } });
 
     if (player) {
+      if (player.auth0Id && player.auth0Id !== auth0Id) {
+        console.warn("[sso-complete] Auth0 mismatch for player email:", email);
+        return redirectToLogin(request, "Google account mismatch for this email.");
+      }
+
       userId = player.id;
       name = player.name ?? auth0User.name ?? null;
       role = "Player";
@@ -79,7 +92,7 @@ export async function GET(request: NextRequest) {
         await prisma.player.update({
           where: { id: player.id },
           data: {
-            auth0Id,
+            ...(player.auth0Id ? {} : { auth0Id }),
             lastLoginAt: new Date(),
             isOnline: true,
           },
@@ -126,4 +139,3 @@ export async function GET(request: NextRequest) {
 
   return response;
 }
-

@@ -1,10 +1,15 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { deleteSessionCookie, getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getAuth0Client } from "@/lib/auth0";
+import { AUTH0_LOGOUT_PATH } from "@/lib/auth0-routes";
 
 export const runtime = "nodejs";
 
-export async function POST(request: NextRequest) {
+export async function POST() {
+  const auth0 = getAuth0Client();
+  const auth0Session = auth0 ? await auth0.getSession() : null;
+
   try {
     const session = await getSession();
     
@@ -28,6 +33,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       message: "Logged out successfully",
+      redirectTo: auth0Session
+        ? `${AUTH0_LOGOUT_PATH}?returnTo=${encodeURIComponent("/auth/login")}`
+        : null,
     });
   } catch (error) {
     console.error("[logout] Error:", error);
@@ -35,7 +43,13 @@ export async function POST(request: NextRequest) {
     await deleteSessionCookie();
     
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Logout failed" },
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : "Logout failed",
+        redirectTo: auth0Session
+          ? `${AUTH0_LOGOUT_PATH}?returnTo=${encodeURIComponent("/auth/login")}`
+          : null,
+      },
       { status: 500 }
     );
   }

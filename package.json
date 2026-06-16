@@ -23,6 +23,7 @@
     "create-demo-showcase": "node scripts/create-demo-showcase.js"
   },
   "dependencies": {
+    "@auth0/nextjs-auth0": "^4.13.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^6.19.0",

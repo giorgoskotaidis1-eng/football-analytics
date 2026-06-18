@@ -759,7 +759,7 @@ const translations: Record<Language, Record<string, string>> = {
     aiAssistant: "AI Assistant",
     footballAnalyticsAssistant: "Football Analytics Assistant",
     assistantDescription:
-      "Ask questions about your data, get tactical insights, and analyse match statistics.",
+      "Ask questions about your data, get tactical insights, and analyze match statistics.",
     conversations: "Conversations",
     newChat: "New chat",
     noConversationsYet: "No conversations yet.",
@@ -1494,7 +1494,7 @@ const translations: Record<Language, Record<string, string>> = {
     aiAssistant: "AI Βοηθός",
     footballAnalyticsAssistant: "Football Analytics Assistant",
     assistantDescription:
-      "Κάνε ερωτήσεις για τα δεδομένα σου, πάρε τακτικά insights και ανέλυσε στατιστικά αγώνων.",
+      "Κάνε ερωτήσεις για τα δεδομένα σου, πάρε τακτικές πληροφορίες και ανέλυσε στατιστικά αγώνων.",
     conversations: "Συνομιλίες",
     newChat: "Νέα συνομιλία",
     noConversationsYet: "Δεν υπάρχουν συνομιλίες ακόμα.",

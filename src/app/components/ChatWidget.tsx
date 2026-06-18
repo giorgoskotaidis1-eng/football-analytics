@@ -48,7 +48,7 @@ export function ChatWidget() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const handleUnauthorized = useCallback(() => {
-    toast.error(t("sessionExpiredPleaseLogin") || "Session expired. Please sign in again.");
+    toast.error(t("sessionExpiredPleaseLogin"));
     router.push("/auth/login");
   }, [router, t]);
 
@@ -232,7 +232,7 @@ export function ChatWidget() {
       {/* Floating toggle button */}
       <button
         onClick={() => setOpen((v) => !v)}
-        aria-label={open ? t("closeAiAssistant") || "Close AI Assistant" : t("openAiAssistant") || "Open AI Assistant"}
+        aria-label={open ? t("closeAiAssistant") : t("openAiAssistant")}
         className="fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-xl shadow-lg ring-2 ring-emerald-400/40 transition hover:bg-emerald-400 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-emerald-500/50"
       >
         {open ? "✕" : "🤖"}

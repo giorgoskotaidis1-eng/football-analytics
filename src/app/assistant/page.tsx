@@ -307,7 +307,7 @@ export default function AssistantPage() {
                 </p>
                 <p className="mt-1 text-[11px] text-slate-500">
                   {t("assistantExamples") ||
-                    "Try: \"Show me top scorers\" or \"Explain high press tactics\""}
+                    "Ask about stats, tactics or match data."}
                 </p>
               </div>
             )}

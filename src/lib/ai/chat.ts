@@ -32,7 +32,8 @@ export interface MemoryContext {
  * Default model used when OPENAI_MODEL env var is not set.
  * Override at runtime by setting process.env.OPENAI_MODEL.
  */
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_MODEL = "gpt-5.4-mini";
+const LEGACY_FALLBACK_MODEL = "gpt-4o-mini";
 
 let _client: OpenAI | null = null;
 
@@ -73,8 +74,42 @@ function getClient(): OpenAI {
   return _client;
 }
 
+/**
+ * Accepts the messy values humans actually type into Vercel.
+ * Examples:
+ * - "5 mini"       -> "gpt-5.4-mini"
+ * - "gpt 5 mini"   -> "gpt-5.4-mini"
+ * - "gpt-5-mini"   -> "gpt-5.4-mini"
+ * - "gpt-5.4 mini" -> "gpt-5.4-mini"
+ */
+function normalizeModelName(value: string | undefined): string {
+  const raw = (value || DEFAULT_MODEL).trim();
+  if (!raw) return DEFAULT_MODEL;
+
+  const compact = raw.toLowerCase().replace(/[_.\s]+/g, "-");
+
+  const aliases: Record<string, string> = {
+    "5-mini": DEFAULT_MODEL,
+    "gpt-5-mini": DEFAULT_MODEL,
+    "gpt5-mini": DEFAULT_MODEL,
+    "gpt-5.4-mini": DEFAULT_MODEL,
+    "gpt-5-4-mini": DEFAULT_MODEL,
+    "5.4-mini": DEFAULT_MODEL,
+    "5-4-mini": DEFAULT_MODEL,
+    "4o-mini": LEGACY_FALLBACK_MODEL,
+    "gpt-4o-mini": LEGACY_FALLBACK_MODEL,
+    "gpt4o-mini": LEGACY_FALLBACK_MODEL,
+  };
+
+  return aliases[compact] || compact;
+}
+
 function getModel(): string {
-  return process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  return normalizeModelName(process.env.OPENAI_MODEL);
+}
+
+function shouldUseResponsesApi(model: string): boolean {
+  return model.startsWith("gpt-5") || model.startsWith("gpt-realtime");
 }
 
 function buildDemoReply(params: {
@@ -104,6 +139,58 @@ function buildDemoReply(params: {
       ? `There are ${memories.length} relevant memory item(s) ready to be injected when real AI mode is enabled.`
       : "No saved memory items were found yet.",
   ].join("\n");
+}
+
+function buildSystemContent(systemInstructions: string, memories: MemoryContext[]): string {
+  const memorySection =
+    memories.length > 0
+      ? `\n\n## Relevant context from this user's previous conversations:\n${memories
+          .map((m) => `- ${m.summary}`)
+          .join("\n")}`
+      : "";
+
+  return `${systemInstructions}${memorySection}`;
+}
+
+function buildResponsesInput(
+  systemContent: string,
+  history: ChatMessage[],
+  newUserMessage: string
+): string {
+  const transcript = history
+    .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+    .join("\n");
+
+  return [
+    `SYSTEM:\n${systemContent}`,
+    transcript ? `\nRECENT CHAT HISTORY:\n${transcript}` : "",
+    `\nUSER:\n${newUserMessage}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function extractResponsesText(response: unknown): string {
+  const maybe = response as {
+    output_text?: unknown;
+    output?: Array<{
+      content?: Array<{ text?: unknown; type?: unknown }>;
+    }>;
+  };
+
+  if (typeof maybe.output_text === "string") {
+    return maybe.output_text.trim();
+  }
+
+  if (Array.isArray(maybe.output)) {
+    return maybe.output
+      .flatMap((item) => item.content || [])
+      .map((content) => (typeof content.text === "string" ? content.text : ""))
+      .join("\n")
+      .trim();
+  }
+
+  return "";
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -146,30 +233,37 @@ export async function generateAssistantReply(params: {
     return { ok: false, message };
   }
 
-  // Build the system content, injecting relevant memories when available
-  const memorySection =
-    memories.length > 0
-      ? `\n\n## Relevant context from this user's previous conversations:\n${memories
-          .map((m) => `- ${m.summary}`)
-          .join("\n")}`
-      : "";
-
-  const systemContent = `${systemInstructions}${memorySection}`;
-
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemContent },
-    ...history.map(
-      (m): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
-        role: m.role,
-        content: m.content,
-      })
-    ),
-    { role: "user", content: newUserMessage },
-  ];
+  const model = getModel();
+  const systemContent = buildSystemContent(systemInstructions, memories);
 
   try {
+    if (shouldUseResponsesApi(model)) {
+      const response = await (client.responses as any).create({
+        model,
+        input: buildResponsesInput(systemContent, history, newUserMessage),
+        max_output_tokens: 1024,
+      });
+
+      const text = extractResponsesText(response);
+      if (!text) {
+        return { ok: false, message: "The AI model returned an empty response." };
+      }
+      return { ok: true, text };
+    }
+
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: systemContent },
+      ...history.map(
+        (m): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
+          role: m.role,
+          content: m.content,
+        })
+      ),
+      { role: "user", content: newUserMessage },
+    ];
+
     const completion = await client.chat.completions.create({
-      model: getModel(),
+      model,
       messages,
       max_tokens: 1024,
       temperature: 0.7,

@@ -9,11 +9,22 @@ import { useTranslation } from "@/lib/i18n";
 
 type MessageRole = "user" | "assistant";
 
+type ImageMimeType = "image/jpeg" | "image/png" | "image/webp";
+
+interface ChatAttachment {
+  type: "image";
+  name: string;
+  mimeType: ImageMimeType;
+  sizeBytes: number;
+  dataUrl: string;
+}
+
 interface ChatMessage {
   id?: number;
   role: MessageRole;
   content: string;
   createdAt?: string;
+  attachments?: ChatAttachment[];
 }
 
 interface Conversation {
@@ -22,6 +33,29 @@ interface Conversation {
   messageCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+const ALLOWED_IMAGE_TYPES: ImageMimeType[] = ["image/jpeg", "image/png", "image/webp"];
+const MAX_IMAGE_ATTACHMENTS = 3;
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+
+function isAllowedImageType(type: string): type is ImageMimeType {
+  return ALLOWED_IMAGE_TYPES.includes(type as ImageMimeType);
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("Invalid file result"));
+    };
+    reader.onerror = () => reject(reader.error || new Error("Unable to read file"));
+    reader.readAsDataURL(file);
+  });
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -41,20 +75,19 @@ export default function AssistantPage() {
 
   // ── Input state ──────────────────────────────────────────────────────────
   const [inputValue, setInputValue] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [sending, setSending] = useState(false);
 
-  // ── Scroll anchor ────────────────────────────────────────────────────────
+  // ── Refs ─────────────────────────────────────────────────────────────────
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUnauthorized = useCallback(() => {
-    toast.error(t("sessionExpiredPleaseLogin"));
+    toast.error(t("sessionExpiredPleaseLogin") || "Session expired. Please log in again.");
     router.push("/auth/login");
   }, [router, t]);
 
   // ─── Load conversation list ─────────────────────────────────────────────
-  // `t` is intentionally NOT in the dependency array — the translation function
-  // reference may change on re-render (language toggle), which would trigger
-  // unnecessary refetches. Error messages use stable inline fallbacks instead.
   const loadConversations = useCallback(async () => {
     setLoadingConversations(true);
     try {
@@ -92,6 +125,7 @@ export default function AssistantPage() {
     setActiveConversationId(id);
     setLoadingMessages(true);
     setMessages([]);
+    setAttachments([]);
     try {
       const res = await fetch(`/api/chat/conversations/${id}`);
       const data = await res.json().catch(() => null);
@@ -117,6 +151,63 @@ export default function AssistantPage() {
     setActiveConversationId(null);
     setMessages([]);
     setInputValue("");
+    setAttachments([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function handleFileChange(files: FileList | null) {
+    if (!files || files.length === 0) return;
+
+    const existing = attachments.length;
+    const incoming = Array.from(files);
+    const availableSlots = MAX_IMAGE_ATTACHMENTS - existing;
+
+    if (availableSlots <= 0) {
+      toast.error(`You can attach up to ${MAX_IMAGE_ATTACHMENTS} images per message.`);
+      return;
+    }
+
+    const acceptedFiles = incoming.slice(0, availableSlots);
+    if (incoming.length > acceptedFiles.length) {
+      toast.error(`Only ${MAX_IMAGE_ATTACHMENTS} images can be attached per message.`);
+    }
+
+    const nextAttachments: ChatAttachment[] = [];
+
+    for (const file of acceptedFiles) {
+      if (!isAllowedImageType(file.type)) {
+        toast.error(`${file.name} is not supported. Use JPG, PNG or WebP.`);
+        continue;
+      }
+
+      if (file.size > MAX_IMAGE_SIZE_BYTES) {
+        toast.error(`${file.name} is too large. Max size is 5MB.`);
+        continue;
+      }
+
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        nextAttachments.push({
+          type: "image",
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          dataUrl,
+        });
+      } catch {
+        toast.error(`Unable to read ${file.name}.`);
+      }
+    }
+
+    if (nextAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...nextAttachments]);
+    }
+
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function removeAttachment(index: number) {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
   }
 
   // ─── Send a message ─────────────────────────────────────────────────────
@@ -124,14 +215,22 @@ export default function AssistantPage() {
   async function handleSend(e: FormEvent) {
     e.preventDefault();
     const text = inputValue.trim();
-    if (!text || sending) return;
+    const outgoingAttachments = attachments;
+
+    if ((!text && outgoingAttachments.length === 0) || sending) return;
 
     setSending(true);
 
     // Optimistically add user message
-    const optimisticUser: ChatMessage = { role: "user", content: text };
+    const optimisticUser: ChatMessage = {
+      role: "user",
+      content: text || "[Image attached]",
+      attachments: outgoingAttachments,
+    };
     setMessages((prev) => [...prev, optimisticUser]);
     setInputValue("");
+    setAttachments([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
 
     try {
       const res = await fetch("/api/chat", {
@@ -141,6 +240,7 @@ export default function AssistantPage() {
         body: JSON.stringify({
           message: text,
           conversationId: activeConversationId ?? undefined,
+          attachments: outgoingAttachments,
         }),
       });
       const data = await res.json().catch(() => null);
@@ -148,6 +248,7 @@ export default function AssistantPage() {
       if (res.status === 401) {
         setMessages((prev) => prev.slice(0, -1));
         setInputValue(text);
+        setAttachments(outgoingAttachments);
         handleUnauthorized();
         return;
       }
@@ -156,7 +257,8 @@ export default function AssistantPage() {
         // Remove the optimistic message on error
         setMessages((prev) => prev.slice(0, -1));
         toast.error(data?.message || t("failedToSendMessage") || "Failed to send message");
-        setInputValue(text); // restore input
+        setInputValue(text);
+        setAttachments(outgoingAttachments);
         return;
       }
 
@@ -165,8 +267,6 @@ export default function AssistantPage() {
         setActiveConversationId(data.conversationId);
         await loadConversations();
       } else {
-        // Re-fetch conversation list so updatedAt comes from the server
-        // (avoids client-side clock skew affecting sidebar sort order).
         void loadConversations();
       }
 
@@ -178,6 +278,7 @@ export default function AssistantPage() {
       setMessages((prev) => prev.slice(0, -1));
       toast.error(t("anErrorOccurred") || "An error occurred");
       setInputValue(text);
+      setAttachments(outgoingAttachments);
     } finally {
       setSending(false);
     }
@@ -237,6 +338,8 @@ export default function AssistantPage() {
     }
   }
 
+  const canSend = inputValue.trim().length > 0 || attachments.length > 0;
+
   // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
@@ -253,13 +356,12 @@ export default function AssistantPage() {
         </h1>
         <p className="text-[11px] text-slate-500">
           {t("assistantDescription") ||
-            "Ask questions about your data, get tactical insights, and analyse match statistics."}
+            "Ask questions about your data, upload screenshots, get tactical insights, and analyse match statistics."}
         </p>
       </div>
 
       {/* Main layout: sidebar + chat area */}
       <div className="flex h-[calc(100vh-13rem)] gap-4 overflow-hidden">
-
         {/* ── Conversation sidebar ────────────────────────────────────────── */}
         <aside className="hidden w-56 flex-shrink-0 flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 md:flex">
           <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2.5">
@@ -288,7 +390,7 @@ export default function AssistantPage() {
               conversations.map((conv) => (
                 <div
                   key={conv.id}
-                  className={`group flex items-center justify-between gap-1 px-3 py-2 cursor-pointer hover:bg-slate-800/50 ${
+                  className={`group flex cursor-pointer items-center justify-between gap-1 px-3 py-2 hover:bg-slate-800/50 ${
                     activeConversationId === conv.id
                       ? "border-l-2 border-emerald-500 bg-slate-800/40"
                       : ""
@@ -326,9 +428,8 @@ export default function AssistantPage() {
 
         {/* ── Chat area ──────────────────────────────────────────────────── */}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80">
-
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+          <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
             {messages.length === 0 && !loadingMessages && (
               <div className="flex h-full flex-col items-center justify-center text-center">
                 <span className="text-4xl">🤖</span>
@@ -337,7 +438,7 @@ export default function AssistantPage() {
                 </p>
                 <p className="mt-1 text-[11px] text-slate-500">
                   {t("assistantExamples") ||
-                    "Ask about stats, tactics or match data."}
+                    "Ask about stats, tactics, match data, or upload a screenshot."}
                 </p>
               </div>
             )}
@@ -367,32 +468,85 @@ export default function AssistantPage() {
           {/* Input bar */}
           <form
             onSubmit={(e) => void handleSend(e)}
-            className="flex items-end gap-2 border-t border-slate-800 px-3 py-3"
+            className="space-y-2 border-t border-slate-800 px-3 py-3"
           >
-            <textarea
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void handleSend(e as unknown as FormEvent);
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {attachments.map((attachment, index) => (
+                  <div
+                    key={`${attachment.name}-${index}`}
+                    className="relative overflow-hidden rounded-lg border border-slate-700 bg-slate-900"
+                  >
+                    <img
+                      src={attachment.dataUrl}
+                      alt={attachment.name}
+                      className="h-20 w-20 object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(index)}
+                      disabled={sending}
+                      className="absolute right-1 top-1 rounded-full bg-slate-950/80 px-1.5 text-[10px] text-slate-100 hover:bg-red-500"
+                      title="Remove image"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-end gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                className="hidden"
+                onChange={(e) => void handleFileChange(e.target.files)}
+              />
+
+              <button
+                type="button"
+                disabled={sending || attachments.length >= MAX_IMAGE_ATTACHMENTS}
+                onClick={() => fileInputRef.current?.click()}
+                className="h-9 w-9 shrink-0 rounded-xl border border-slate-700 bg-slate-900 text-slate-200 hover:border-emerald-500 hover:text-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Attach image"
+              >
+                📎
+              </button>
+
+              <textarea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleSend(e as unknown as FormEvent);
+                  }
+                }}
+                placeholder={
+                  t("typeYourMessage") ||
+                  "Type a message or attach an image… (Enter to send)"
                 }
-              }}
-              placeholder={t("typeYourMessage") || "Type a message… (Enter to send)"}
-              rows={1}
-              maxLength={4000}
-              disabled={sending}
-              className="min-h-[36px] flex-1 resize-none rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/60 disabled:opacity-60"
-              style={{ maxHeight: "8rem", overflowY: "auto" }}
-            />
-            <button
-              type="submit"
-              disabled={sending || !inputValue.trim()}
-              className="h-9 w-9 shrink-0 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-base"
-              title={t("send") || "Send"}
-            >
-              ↑
-            </button>
+                rows={1}
+                maxLength={4000}
+                disabled={sending}
+                className="min-h-[36px] flex-1 resize-none rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/60 disabled:opacity-60"
+                style={{ maxHeight: "8rem", overflowY: "auto" }}
+              />
+              <button
+                type="submit"
+                disabled={sending || !canSend}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-base text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                title={t("send") || "Send"}
+              >
+                ↑
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-500">
+              JPG, PNG or WebP. Up to {MAX_IMAGE_ATTACHMENTS} images, 5MB each.
+            </p>
           </form>
         </div>
       </div>
@@ -414,6 +568,18 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             : "rounded-tl-sm border border-slate-700 bg-slate-800 text-slate-100"
         }`}
       >
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {message.attachments.map((attachment, index) => (
+              <img
+                key={`${attachment.name}-${index}`}
+                src={attachment.dataUrl}
+                alt={attachment.name}
+                className="max-h-56 max-w-full rounded-lg border border-slate-700 object-contain"
+              />
+            ))}
+          </div>
+        )}
         <p className="whitespace-pre-wrap break-words">{message.content}</p>
         {message.createdAt && (
           <p

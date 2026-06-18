@@ -4,10 +4,10 @@
  * Chat flow:
  *  1. Authenticate
  *  2. Resolve or create Conversation
- *  3. Save user ChatMessage
+ *  3. Save user ChatMessage + optional image attachment metadata
  *  4. Load recent conversation history
  *  5. Fetch relevant MemoryItems for this user
- *  6. Build prompt (system + memories + history + new message + optional images)
+ *  6. Build prompt (system + app context + memories + history + new message + optional images)
  *  7. Call AI model
  *  8. Save assistant ChatMessage
  *  9. Attempt to summarise for memory (non-fatal)
@@ -19,6 +19,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateAssistantReply } from "@/lib/ai/chat";
 import { getRelevantMemories, maybeSummarizeConversation } from "@/lib/ai/memory";
+import { buildAssistantSystemPrompt } from "@/lib/ai/app-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,6 +36,8 @@ const MAX_CONVERSATION_TITLE_LENGTH = 60;
 const allowedImageMimeTypes = ["image/jpeg", "image/png", "image/webp"] as const;
 const MAX_IMAGE_ATTACHMENTS = 3;
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+
+type ChatAttachmentInput = z.infer<typeof imageAttachmentSchema>;
 
 const imageAttachmentSchema = z.object({
   type: z.literal("image"),
@@ -60,13 +63,24 @@ const sendMessageSchema = z
     message: "Message or image attachment is required",
   });
 
-const SYSTEM_INSTRUCTIONS = `You are a professional football analytics assistant embedded in a football analytics platform.
-You help coaches, analysts, and scouts by answering questions about match data, player statistics, team performance, and football tactics.
-You can also analyse uploaded images and screenshots, including football statistics tables, dashboards, tactical screenshots, heatmaps, charts, lineups, reports, and match frames.
-When an image is provided, describe what is visible, extract the key football data, explain the tactical or analytical meaning, and clearly mention if the image is unclear or incomplete.
-Be concise, precise, and professional. Use football terminology correctly.
-If you don't know something, say so clearly rather than guessing.
-Never reveal, store, or repeat passwords, API keys, tokens, or any sensitive personal credentials.`;
+const SYSTEM_INSTRUCTIONS = buildAssistantSystemPrompt();
+
+async function persistImageAttachments(messageId: number, attachments: ChatAttachmentInput[]) {
+  if (attachments.length === 0) return;
+
+  try {
+    for (const attachment of attachments) {
+      await prisma.$executeRaw`
+        INSERT INTO "ChatAttachment" ("messageId", "type", "name", "mimeType", "sizeBytes", "dataUrl")
+        VALUES (${messageId}, ${attachment.type}, ${attachment.name}, ${attachment.mimeType}, ${attachment.sizeBytes}, ${attachment.dataUrl})
+      `;
+    }
+  } catch (err) {
+    // Attachment persistence should not stop the actual AI answer.
+    // The image is still sent to the model in this request.
+    console.error("[api/chat] image attachment persist failed:", err);
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -146,7 +160,7 @@ export async function POST(request: NextRequest) {
         .join(", ")}]`;
 
     try {
-      await prisma.chatMessage.create({
+      const userMessage = await prisma.chatMessage.create({
         data: {
           userId,
           conversationId,
@@ -154,6 +168,8 @@ export async function POST(request: NextRequest) {
           content: persistedUserContent,
         },
       });
+
+      await persistImageAttachments(userMessage.id, attachments);
     } catch (err) {
       console.error("[api/chat] user message persist failed:", err);
     }

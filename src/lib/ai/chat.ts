@@ -5,6 +5,10 @@
  * so that `next build` never crashes when OPENAI_API_KEY is absent at
  * build time — consistent with the pattern used in src/lib/auth.ts and
  * src/lib/email.ts.
+ *
+ * If OPENAI_API_KEY is missing, the assistant automatically falls back to
+ * demo mode. Demo mode keeps the UI usable and persists conversations, but it
+ * does not call a real AI model.
  */
 import OpenAI from "openai";
 
@@ -33,6 +37,24 @@ const DEFAULT_MODEL = "gpt-4o-mini";
 let _client: OpenAI | null = null;
 
 /**
+ * Returns true only when the real AI provider can be called.
+ */
+export function isAiConfigured(): boolean {
+  return Boolean(process.env.OPENAI_API_KEY);
+}
+
+/**
+ * Demo mode is enabled when:
+ * - AI_ASSISTANT_DEMO_MODE=true, or
+ * - OPENAI_API_KEY is missing.
+ *
+ * This lets the app run safely without paid API billing during demos.
+ */
+export function isAiDemoModeEnabled(): boolean {
+  return process.env.AI_ASSISTANT_DEMO_MODE === "true" || !isAiConfigured();
+}
+
+/**
  * Returns the memoised OpenAI client instance.
  * Throws a clear, user-readable error if OPENAI_API_KEY is missing so the
  * calling route can return a clean 5xx with { ok: false, message }.
@@ -53,6 +75,35 @@ function getClient(): OpenAI {
 
 function getModel(): string {
   return process.env.OPENAI_MODEL || DEFAULT_MODEL;
+}
+
+function buildDemoReply(params: {
+  memories: MemoryContext[];
+  history: ChatMessage[];
+  newUserMessage: string;
+}): string {
+  const { memories, history, newUserMessage } = params;
+  const hasHistory = history.length > 0;
+  const hasMemories = memories.length > 0;
+
+  return [
+    "🟡 Demo mode is active. The assistant UI, conversations, and database memory plumbing are working, but no real AI model is being called yet.",
+    "",
+    `Your message was: “${newUserMessage}”`,
+    "",
+    "What will happen after you add OPENAI_API_KEY:",
+    "- this same chat will call the real OpenAI model",
+    "- previous conversation messages will be used as context",
+    "- useful long-term memories will be saved per user",
+    "- the assistant will give football analytics answers instead of this demo response",
+    "",
+    hasHistory
+      ? `This conversation already has ${history.length} previous message(s) available for context.`
+      : "This is a new conversation with no previous chat history yet.",
+    hasMemories
+      ? `There are ${memories.length} relevant memory item(s) ready to be injected when real AI mode is enabled.`
+      : "No saved memory items were found yet.",
+  ].join("\n");
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -77,6 +128,14 @@ export async function generateAssistantReply(params: {
   newUserMessage: string;
 }): Promise<{ ok: true; text: string } | { ok: false; message: string }> {
   const { systemInstructions, memories, history, newUserMessage } = params;
+
+  // Demo/fallback mode: keep the chat feature usable without paid OpenAI API.
+  if (isAiDemoModeEnabled()) {
+    return {
+      ok: true,
+      text: buildDemoReply({ memories, history, newUserMessage }),
+    };
+  }
 
   let client: OpenAI;
   try {

@@ -10,7 +10,7 @@
  * and computes cosine similarity here.
  */
 import { prisma } from "@/lib/prisma";
-import { generateAssistantReply } from "./chat";
+import { generateAssistantReply, isAiDemoModeEnabled } from "./chat";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -166,6 +166,9 @@ export async function maybeSummarizeConversation(
   userId: number,
   conversationId: number
 ): Promise<void> {
+  // In demo mode there is no real AI model, so do not save fake/demo summaries.
+  if (isAiDemoModeEnabled()) return;
+
   const count = await prisma.chatMessage.count({
     where: { conversationId },
   });

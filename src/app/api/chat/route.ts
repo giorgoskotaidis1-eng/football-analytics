@@ -90,7 +90,21 @@ export async function POST(request: NextRequest) {
     conversationId = created.id;
   }
 
-  // ── Step 3: Save user message ─────────────────────────────────────────────
+  // ── Steps 3 + 4: Load history first, then save user message ─────────────
+  // History is loaded BEFORE saving the new user message so we don't need to
+  // exclude it from the prompt — it is passed separately as `newUserMessage`.
+  //
+  // `orderBy: desc + take: N + reverse()` fetches the most-recent N messages
+  // in chronological order. Using `orderBy: asc + take: N` would instead
+  // return the OLDEST N messages, which is wrong for long conversations.
+  const historyMessages = await prisma.chatMessage.findMany({
+    where: { conversationId },
+    orderBy: { createdAt: "desc" },
+    take: HISTORY_LIMIT,
+    select: { role: true, content: true },
+  });
+  historyMessages.reverse(); // oldest → newest (chronological order for AI)
+
   await prisma.chatMessage.create({
     data: {
       userId: user.id,
@@ -100,20 +114,6 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  // ── Step 4: Load recent conversation history ──────────────────────────────
-  // Fetch last HISTORY_LIMIT messages (desc for recency, then reverse for
-  // chronological order expected by the AI prompt builder).
-  const recentMessages = await prisma.chatMessage.findMany({
-    where: { conversationId },
-    orderBy: { createdAt: "desc" },
-    take: HISTORY_LIMIT,
-    select: { role: true, content: true },
-  });
-  recentMessages.reverse(); // oldest → newest
-
-  // Exclude the message we just saved from history (it goes as the user turn)
-  const history = recentMessages.slice(0, -1);
-
   // ── Step 5: Fetch relevant memories for this user ─────────────────────────
   const memories = await getRelevantMemories(user.id, newMessage, MEMORY_LIMIT);
 
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
   const aiResult = await generateAssistantReply({
     systemInstructions: SYSTEM_INSTRUCTIONS,
     memories,
-    history: history.map((m) => ({
+    history: historyMessages.map((m) => ({
       role: m.role as "user" | "assistant" | "system",
       content: m.content,
     })),

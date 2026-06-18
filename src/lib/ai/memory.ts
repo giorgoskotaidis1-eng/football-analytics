@@ -58,9 +58,6 @@ function redactSensitiveData(text: string): string {
 
 // ─── Relevance scoring ───────────────────────────────────────────────────────
 
-/** Milliseconds per day — extracted to avoid redundant arithmetic in the scoring loop. */
-const MS_PER_DAY = 86_400_000;
-
 /**
  * Computes a composite relevance score for a MemoryItem against a user query.
  *
@@ -80,6 +77,9 @@ function scoreRelevance(
   createdAt: Date,
   now: number
 ): number {
+  // Milliseconds per day — computed once here to avoid repetition
+  const MS_PER_DAY = 86_400_000;
+
   // Tokenise query: only terms longer than 2 characters
   const queryTerms = query
     .toLowerCase()

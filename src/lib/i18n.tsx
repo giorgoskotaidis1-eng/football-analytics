@@ -471,6 +471,14 @@ const translations: Record<Language, Record<string, string>> = {
     team: "Team",
     teams: "Teams",
     
+    // Language / Theme
+    language: "Language",
+    english: "English",
+    greek: "Greek",
+    theme: "Theme",
+    dark: "Dark",
+    light: "Light",
+
     // Settings / Profile
     profileAndSecurity: "Profile & security",
     accountSettings: "Account settings",
@@ -1178,6 +1186,14 @@ const translations: Record<Language, Record<string, string>> = {
     xg: "xG",
     team: "Ομάδα",
     teams: "Ομάδες",
+    // Language / Theme
+    language: "Γλώσσα",
+    english: "Αγγλικά",
+    greek: "Ελληνικά",
+    theme: "Θέμα",
+    dark: "Σκούρο",
+    light: "Ανοιχτό",
+
     // Settings / Profile
     profileAndSecurity: "Προφίλ & Ασφάλεια",
     accountSettings: "Ρυθμίσεις Λογαριασμού",

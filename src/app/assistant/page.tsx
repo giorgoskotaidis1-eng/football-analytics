@@ -45,23 +45,26 @@ export default function AssistantPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // ─── Load conversation list ─────────────────────────────────────────────
-
+  // `t` is intentionally NOT in the dependency array — the translation function
+  // reference may change on re-render (language toggle), which would trigger
+  // unnecessary refetches. Error messages use stable inline fallbacks instead.
   const loadConversations = useCallback(async () => {
     setLoadingConversations(true);
     try {
       const res = await fetch("/api/chat/conversations");
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.ok) {
-        toast.error(data?.message || t("failedToLoadConversations") || "Failed to load conversations");
+        toast.error(data?.message || "Failed to load conversations");
         return;
       }
       setConversations(Array.isArray(data.conversations) ? data.conversations : []);
     } catch {
-      toast.error(t("anErrorOccurred") || "An error occurred");
+      toast.error("An error occurred");
     } finally {
       setLoadingConversations(false);
     }
-  }, [t]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     void loadConversations();
@@ -140,14 +143,9 @@ export default function AssistantPage() {
         setActiveConversationId(data.conversationId);
         await loadConversations();
       } else {
-        // Update the conversation's updatedAt in the sidebar (no count — avoid stale state)
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === activeConversationId
-              ? { ...c, updatedAt: new Date().toISOString() }
-              : c
-          )
-        );
+        // Re-fetch conversation list so updatedAt comes from the server
+        // (avoids client-side clock skew affecting sidebar sort order).
+        void loadConversations();
       }
 
       // Append the assistant message

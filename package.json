@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0",
-    "build": "node --max-old-space-size=8192 node_modules/next/dist/bin/next build",
+    "build": "prisma generate && prisma migrate deploy && node --max-old-space-size=8192 node_modules/next/dist/bin/next build",
     "start": "next start",
     "lint": "eslint",
     "setup-env": "node create-env.js",
@@ -16,6 +16,7 @@
     "full-setup": "node scripts/full-setup.js",
     "fix-password": "node scripts/fix-user-password.js",
     "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
     "create-user": "node scripts/create-default-user.js",
     "reset-paokjim": "node scripts/reset-paokjim-password.js",
     "create-test-player": "node scripts/create-test-player.js",

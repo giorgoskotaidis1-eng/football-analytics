@@ -10,6 +10,10 @@ type Stats = {
   totalTeams: number;
 };
 
+type PlayerLogin = {
+  isOnline?: boolean;
+};
+
 export default function AdminDashboardPage() {
   const { t } = useTranslation();
   const [stats, setStats] = useState<Stats>({
@@ -30,18 +34,18 @@ export default function AdminDashboardPage() {
         ]);
 
         if (playersRes.ok) {
-          const playersData = await playersRes.json();
+          const playersData = (await playersRes.json()) as { ok?: boolean; players?: PlayerLogin[] };
           if (playersData.ok && playersData.players) {
             setStats((prev) => ({
               ...prev,
               totalPlayers: playersData.players.length,
-              onlinePlayers: playersData.players.filter((p: any) => p.isOnline).length,
+              onlinePlayers: playersData.players.filter((player) => player.isOnline).length,
             }));
           }
         }
 
         if (matchesRes.ok) {
-          const matchesData = await matchesRes.json();
+          const matchesData = (await matchesRes.json()) as { ok?: boolean; matches?: unknown[]; total?: number };
           if (matchesData.ok && matchesData.matches) {
             setStats((prev) => ({
               ...prev,
@@ -51,7 +55,7 @@ export default function AdminDashboardPage() {
         }
 
         if (teamsRes.ok) {
-          const teamsData = await teamsRes.json();
+          const teamsData = (await teamsRes.json()) as { ok?: boolean; teams?: unknown[] };
           if (teamsData.ok && teamsData.teams) {
             setStats((prev) => ({
               ...prev,

@@ -42,7 +42,12 @@ export function HeaderUserArea() {
 
   async function handleLogout() {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      const data = (await res.json().catch(() => null)) as { redirectTo?: string | null } | null;
+      if (data?.redirectTo) {
+        window.location.href = data.redirectTo;
+        return;
+      }
       setUser(null);
       router.push("/auth/login");
       router.refresh();

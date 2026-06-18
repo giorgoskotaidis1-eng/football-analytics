@@ -9,6 +9,7 @@ import { SidebarNav } from "./SidebarNav";
 import { SidebarLogo } from "./SidebarLogo";
 import { SidebarUpgradeCard } from "./SidebarUpgradeCard";
 import { HeaderSearch } from "./HeaderSearch";
+import { ChatWidget } from "./ChatWidget";
 
 export function ConditionalLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -50,6 +51,7 @@ export function ConditionalLayout({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+      <ChatWidget />
     </div>
   );
 }

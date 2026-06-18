@@ -11,19 +11,20 @@ datasource db {
 }
 
 model User {
-  id             Int      @id @default(autoincrement())
-  email          String   @unique
-  name           String?
-  role           String? // e.g. "head_coach", "analyst", "scout"
-  passwordHash   String
-  emailVerified  Boolean  @default(false)
-  phone          String?
-  phoneVerified  Boolean  @default(false)
-  profilePicture String? // URL to profile picture
+  id                     Int      @id @default(autoincrement())
+  email                  String   @unique
+  auth0Id                String?  @unique
+  name                   String?
+  role                   String? // e.g. "head_coach", "analyst", "scout"
+  passwordHash           String?
+  emailVerified          Boolean  @default(false)
+  phone                  String?
+  phoneVerified          Boolean  @default(false)
+  profilePicture         String? // URL to profile picture
   /// Notification preference: "all" (default), "important", or "muted".
   notificationPreference String   @default("all")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   /// Canonical Stripe Customer ID for this user (cus_…). One user ↔ one customer.
   stripeCustomerId String? @unique
@@ -52,6 +53,11 @@ model User {
   dataExports      DataExport[]
   supportTickets   SupportTicket[]
 
+  // AI chatbot relations
+  conversations    Conversation[]
+  chatMessages     ChatMessage[]
+  memoryItems      MemoryItem[]
+
   @@index([email])
   @@index([role])
 }
@@ -68,11 +74,11 @@ model Team {
   createdById Int?
   createdBy   User? @relation("TeamCreator", fields: [createdById], references: [id])
 
-  players   Player[]
-  homeGames Match[]       @relation("HomeTeam")
-  awayGames Match[]       @relation("AwayTeam")
-  lineups   MatchLineup[]
-  members   UserTeam[]
+  players     Player[]
+  homeGames   Match[]          @relation("HomeTeam")
+  awayGames   Match[]          @relation("AwayTeam")
+  lineups     MatchLineup[]
+  members     UserTeam[]
   invitations TeamInvitation[]
 
   @@index([name])
@@ -92,6 +98,7 @@ model Player {
 
   // Authentication for player dashboard
   email        String? @unique
+  auth0Id      String? @unique
   passwordHash String?
 
   // Login tracking
@@ -152,10 +159,10 @@ model Match {
 
   videoPath String? // Path to video file (relative to project root)
 
-  events         MatchEvent[]
-  lineups        MatchLineup[]
-  playlists      Playlist[]
-  playlistClips  PlaylistClip[]
+  events        MatchEvent[]
+  lineups       MatchLineup[]
+  playlists     Playlist[]
+  playlistClips PlaylistClip[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -195,7 +202,7 @@ model MatchEvent {
   // Calculated xG for shots
   xg Float? @default(0)
 
-  createdAt DateTime @default(now())
+  createdAt     DateTime       @default(now())
   playlistClips PlaylistClip[]
 
   @@index([matchId])
@@ -224,18 +231,18 @@ model Playlist {
 }
 
 model PlaylistClip {
-  id           Int        @id @default(autoincrement())
+  id           Int         @id @default(autoincrement())
   playlistId   Int
-  playlist     Playlist   @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  playlist     Playlist    @relation(fields: [playlistId], references: [id], onDelete: Cascade)
   matchId      Int
-  match        Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  match        Match       @relation(fields: [matchId], references: [id], onDelete: Cascade)
   matchEventId Int?
   matchEvent   MatchEvent? @relation(fields: [matchEventId], references: [id], onDelete: SetNull)
   title        String
   startSec     Int
   endSec       Int
-  position     Int        @default(0)
-  createdAt    DateTime   @default(now())
+  position     Int         @default(0)
+  createdAt    DateTime    @default(now())
 
   @@index([playlistId, position])
   @@index([matchId])
@@ -437,8 +444,8 @@ model TeamInvitation {
   email     String
   teamId    Int
   team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  role      String   // e.g. "Head Coach", "Scout", "Analyst"
-  invitedBy Int      // User who sent the invitation
+  role      String // e.g. "Head Coach", "Scout", "Analyst"
+  invitedBy Int // User who sent the invitation
   inviter   User     @relation("TeamInvitations", fields: [invitedBy], references: [id])
   token     String   @unique // Unique token for accepting invitation
   status    String   @default("pending") // "pending", "accepted", "declined", "expired"
@@ -459,7 +466,7 @@ model UploadedFile {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name         String
   originalName String
-  storageKey   String   // path under uploads/files/<userId>/
+  storageKey   String // path under uploads/files/<userId>/
   mimeType     String
   size         Int
   category     String   @default("other") // "report" | "schedule" | "data" | "other"
@@ -472,17 +479,17 @@ model UploadedFile {
 
 // Data exports generated by the user (CSV, JSON, etc.).
 model DataExport {
-  id           Int       @id @default(autoincrement())
-  userId       Int
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  source       String    // "match_events" | "squad_metrics" | "feedback" | "all"
-  format       String    // "csv" | "json"
-  scopeLabel   String    // human-readable scope summary
-  status       String    @default("ready") // "queued" | "processing" | "ready" | "failed"
-  downloadKey  String?
-  fileSize     Int?
-  createdAt    DateTime  @default(now())
-  completedAt  DateTime?
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source      String // "match_events" | "squad_metrics" | "feedback" | "all"
+  format      String // "csv" | "json"
+  scopeLabel  String // human-readable scope summary
+  status      String    @default("ready") // "queued" | "processing" | "ready" | "failed"
+  downloadKey String?
+  fileSize    Int?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
 
   @@index([userId, createdAt])
 }
@@ -495,7 +502,7 @@ model SupportTicket {
   subject   String
   body      String
   priority  String   @default("normal") // "normal" | "high" | "critical"
-  status    String   @default("open")   // "open" | "in_progress" | "resolved"
+  status    String   @default("open") // "open" | "in_progress" | "resolved"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -508,14 +515,67 @@ model Notification {
   id        Int      @id @default(autoincrement())
   userId    Int
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String   // "invitation", "team_update", "match_added", etc.
+  type      String // "invitation", "team_update", "match_added", etc.
   title     String
   message   String
-  link      String?  // Optional link to related page
+  link      String? // Optional link to related page
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([read])
   @@index([createdAt])
+}
+
+// ─── AI Chatbot models ──────────────────────────────────────────────────────
+
+/// A conversation thread between a user and the AI assistant.
+model Conversation {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Title derived from the first message (truncated).
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages  ChatMessage[]
+
+  @@index([userId])
+  @@index([userId, updatedAt])
+}
+
+/// Individual chat message inside a conversation.
+/// Named ChatMessage (not Message) to avoid collision with the staff Message model.
+model ChatMessage {
+  id             Int          @id @default(autoincrement())
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /// "user" | "assistant" | "system"
+  role           String
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+/// A piece of long-term memory distilled from a user's conversations.
+model MemoryItem {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Concise summary of the remembered fact.
+  summary          String
+  /// JSON-encoded array of ChatMessage ids that contributed to this memory.
+  sourceMessageIds String   @default("[]")
+  /// 0–10 importance score; higher = more likely to be retrieved.
+  importanceScore  Float    @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId, importanceScore])
+  @@index([userId, createdAt])
 }

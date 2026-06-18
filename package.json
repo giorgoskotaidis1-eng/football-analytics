@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0",
-    "build": "node --max-old-space-size=8192 node_modules/next/dist/bin/next build",
+    "build": "prisma generate && node scripts/deploy-db.js && node --max-old-space-size=8192 node_modules/next/dist/bin/next build",
     "start": "next start",
     "lint": "eslint",
     "setup-env": "node create-env.js",
@@ -16,6 +16,8 @@
     "full-setup": "node scripts/full-setup.js",
     "fix-password": "node scripts/fix-user-password.js",
     "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "deploy-db": "node scripts/deploy-db.js",
     "create-user": "node scripts/create-default-user.js",
     "reset-paokjim": "node scripts/reset-paokjim-password.js",
     "create-test-player": "node scripts/create-test-player.js",
@@ -23,6 +25,7 @@
     "create-demo-showcase": "node scripts/create-demo-showcase.js"
   },
   "dependencies": {
+    "@auth0/nextjs-auth0": "^4.13.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^6.19.0",
@@ -31,6 +34,7 @@
     "@tanstack/react-query": "^5.90.10",
     "@types/multer": "^2.0.0",
     "@types/uuid": "^10.0.0",
+    "@vercel/blob": "^1.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^16.6.1",
     "es-toolkit": "^1.42.0",
@@ -42,6 +46,7 @@
     "jspdf-autotable": "^5.0.2",
     "multer": "^2.0.2",
     "next": "16.2.7",
+    "openai": "^6.44.0",
     "papaparse": "^5.5.3",
     "prisma": "^6.19.0",
     "react": "19.2.0",

@@ -471,6 +471,14 @@ const translations: Record<Language, Record<string, string>> = {
     team: "Team",
     teams: "Teams",
     
+    // Language / Theme
+    language: "Language",
+    english: "English",
+    greek: "Greek",
+    theme: "Theme",
+    dark: "Dark",
+    light: "Light",
+
     // Settings / Profile
     profileAndSecurity: "Profile & security",
     accountSettings: "Account settings",
@@ -746,7 +754,30 @@ const translations: Record<Language, Record<string, string>> = {
     ticketPriorities: "Priorities",
     priorityNormalDesc: "general questions and feature requests.",
     priorityHighDesc: "blocking workflow issues.",
-    priorityCriticalDesc: "production outage; matches cannot be analyzed."
+    priorityCriticalDesc: "production outage; matches cannot be analyzed.",
+    // AI Chatbot
+    aiAssistant: "AI Assistant",
+    footballAnalyticsAssistant: "Football Analytics Assistant",
+    assistantDescription:
+      "Ask questions about your data, get tactical insights, and analyze match statistics.",
+    conversations: "Conversations",
+    newChat: "New chat",
+    noConversationsYet: "No conversations yet.",
+    untitledChat: "Untitled chat",
+    failedToLoadMessages: "Failed to load messages",
+    failedToSendMessage: "Failed to send message",
+    confirmDeleteConversation: "Delete this conversation?",
+    conversationDeleted: "Conversation deleted",
+    clearAllMemory: "Clear all history & memory",
+    failedToClearMemory: "Failed to clear memory",
+    memoryClearedAll: "History and memory cleared",
+    assistantWelcome: "How can I help you today?",
+    assistantExamples: "Ask about stats, tactics or match data.",
+    typeYourMessage: "Type a message… (Enter to send)",
+    conversationHistory: "Conversation history",
+    openAiAssistant: "Open AI Assistant",
+    closeAiAssistant: "Close AI Assistant",
+    sessionExpiredPleaseLogin: "Session expired. Please sign in again."
   },
   gr: {
     // Navigation
@@ -1178,6 +1209,14 @@ const translations: Record<Language, Record<string, string>> = {
     xg: "xG",
     team: "Ομάδα",
     teams: "Ομάδες",
+    // Language / Theme
+    language: "Γλώσσα",
+    english: "Αγγλικά",
+    greek: "Ελληνικά",
+    theme: "Θέμα",
+    dark: "Σκούρο",
+    light: "Ανοιχτό",
+
     // Settings / Profile
     profileAndSecurity: "Προφίλ & Ασφάλεια",
     accountSettings: "Ρυθμίσεις Λογαριασμού",
@@ -1450,7 +1489,30 @@ const translations: Record<Language, Record<string, string>> = {
     ticketPriorities: "Προτεραιότητες",
     priorityNormalDesc: "γενικές ερωτήσεις και αιτήματα features.",
     priorityHighDesc: "blocking θέματα στη ροή εργασίας.",
-    priorityCriticalDesc: "διακοπή παραγωγής, οι αγώνες δεν αναλύονται."
+    priorityCriticalDesc: "διακοπή παραγωγής, οι αγώνες δεν αναλύονται.",
+    // AI Chatbot
+    aiAssistant: "AI Βοηθός",
+    footballAnalyticsAssistant: "Football Analytics Assistant",
+    assistantDescription:
+      "Κάνε ερωτήσεις για τα δεδομένα σου, πάρε τακτικές πληροφορίες και ανέλυσε στατιστικά αγώνων.",
+    conversations: "Συνομιλίες",
+    newChat: "Νέα συνομιλία",
+    noConversationsYet: "Δεν υπάρχουν συνομιλίες ακόμα.",
+    untitledChat: "Συνομιλία χωρίς τίτλο",
+    failedToLoadMessages: "Αποτυχία φόρτωσης μηνυμάτων",
+    failedToSendMessage: "Αποτυχία αποστολής μηνύματος",
+    confirmDeleteConversation: "Να διαγραφεί αυτή η συνομιλία;",
+    conversationDeleted: "Η συνομιλία διαγράφηκε",
+    clearAllMemory: "Καθαρισμός όλου του ιστορικού & μνήμης",
+    failedToClearMemory: "Αποτυχία καθαρισμού μνήμης",
+    memoryClearedAll: "Το ιστορικό και η μνήμη καθαρίστηκαν",
+    assistantWelcome: "Πώς μπορώ να βοηθήσω σήμερα;",
+    assistantExamples: "Ρώτησε για στατιστικά, τακτικές ή δεδομένα αγώνα.",
+    typeYourMessage: "Γράψε μήνυμα… (Enter για αποστολή)",
+    conversationHistory: "Ιστορικό συνομιλιών",
+    openAiAssistant: "Άνοιγμα AI Βοηθού",
+    closeAiAssistant: "Κλείσιμο AI Βοηθού",
+    sessionExpiredPleaseLogin: "Η συνεδρία έληξε. Συνδέσου ξανά."
   },
 };
 

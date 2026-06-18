@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const teamId = searchParams.get("teamId");
 
-    const where: any = {};
+    const where: Prisma.UserWhereInput = {};
     if (teamId) {
       where.teamMemberships = {
         some: {
@@ -109,7 +110,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Find or create user
-    let targetUser = await prisma.user.findUnique({ where: { email } });
+    const targetUser = await prisma.user.findUnique({ where: { email } });
 
     if (!targetUser) {
       // User doesn't exist - create invitation (for now, just create user without password)

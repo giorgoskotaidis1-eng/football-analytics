@@ -9,7 +9,6 @@ import {
   calculatePPDA,
   calculateHighRegains,
   calculateProgressivePasses,
-  calculateXA,
   calculateRealXA,
   calculatePassAccuracy,
   type ShotEvent,
@@ -21,13 +20,19 @@ export const runtime = "nodejs";
 
 // Simple in-memory cache for analytics
 // In production, use Redis or similar
+type AnalyticsCacheEntry = {
+  data: unknown;
+  timestamp: number;
+  eventCount: number;
+};
+
 declare global {
-  var analyticsCache: Map<string, { data: any; timestamp: number; eventCount: number }> | undefined;
+  var analyticsCache: Map<string, AnalyticsCacheEntry> | undefined;
 }
 
 const analyticsCache = typeof global !== "undefined" 
-  ? (global.analyticsCache ||= new Map<string, { data: any; timestamp: number; eventCount: number }>())
-  : new Map<string, { data: any; timestamp: number; eventCount: number }>();
+  ? (global.analyticsCache ||= new Map<string, AnalyticsCacheEntry>())
+  : new Map<string, AnalyticsCacheEntry>();
 const CACHE_TTL = 30 * 1000; // 30 seconds cache
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

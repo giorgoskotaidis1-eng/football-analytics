@@ -89,13 +89,13 @@ An AI-powered chat assistant is built into the app at `/assistant`. It answers f
 
 ### Demo mode first, paid AI later
 
-The assistant now has a safe demo fallback.
+The assistant has a safe demo fallback.
 
-- If `OPENAI_API_KEY` is missing, `/assistant` still works.
+- If `AI_ASSISTANT_DEMO_MODE=true`, `/assistant` returns a demo response and does not call OpenAI.
+- If `OPENAI_API_KEY` is missing, `/assistant` also falls back to demo mode instead of crashing.
 - Conversations and chat messages are still saved to the database.
-- The assistant returns a clear demo response instead of crashing.
 - Memory summarisation is skipped in demo mode so fake demo text is not saved as a long-term memory.
-- When you later add a real OpenAI API key, the same feature automatically starts using the real model.
+- When you later add a real OpenAI API key, set demo mode to false and the same feature starts using the real model.
 
 For demo testing, set this environment variable:
 
@@ -132,13 +132,27 @@ npx prisma migrate deploy
 npx prisma generate
 ```
 
-### 2. Optional model setting
+### 2. Model setting
 
-The default chat model is `gpt-4o-mini`. You can override it with:
+The default model is:
+
+```bash
+OPENAI_MODEL=gpt-5.4-mini
+```
+
+Important: do not use `5 mini` or `gpt-5-mini` in Vercel if you can avoid it. The code now normalises those aliases to `gpt-5.4-mini`, but the clean value is still:
+
+```bash
+OPENAI_MODEL=gpt-5.4-mini
+```
+
+For older/legacy chat-completions behaviour, you can also use:
 
 ```bash
 OPENAI_MODEL=gpt-4o-mini
 ```
+
+GPT-5.x models are called through the Responses API. Legacy/chat models are called through Chat Completions.
 
 ### 3. How the memory system works
 

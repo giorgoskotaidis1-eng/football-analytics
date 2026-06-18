@@ -185,22 +185,22 @@ function buildResponsesMultimodalInput(params: {
   attachments: ImageAttachmentInput[];
 }) {
   const { history, newUserMessage, attachments } = params;
+  const textWithHistory = buildResponsesTextInput(
+    history,
+    newUserMessage ||
+      "Analyze the uploaded football analytics image/screenshot and explain the key insights."
+  );
 
+  // Keep Responses API multimodal input simple: one user item with transcript text
+  // plus image parts. This avoids invalid assistant-role content parts in some
+  // model/API combinations while preserving recent context.
   return [
-    ...history
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({
-        role: m.role,
-        content: [{ type: "input_text", text: m.content }],
-      })),
     {
       role: "user",
       content: [
         {
           type: "input_text",
-          text:
-            newUserMessage ||
-            "Analyze the uploaded football analytics image/screenshot and explain the key insights.",
+          text: textWithHistory,
         },
         ...attachments.map((attachment) => ({
           type: "input_image",
@@ -274,6 +274,24 @@ function buildChatCompletionMessages(params: {
   });
 
   return messages;
+}
+
+function userFriendlyOpenAiError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : "AI model call failed";
+
+  if (/image|vision|input_image|unsupported/i.test(raw)) {
+    return `Image analysis failed. Make sure OPENAI_MODEL supports vision, for example gpt-5.4-mini or gpt-5.5. Original error: ${raw}`;
+  }
+
+  if (/quota|billing|insufficient/i.test(raw)) {
+    return `OpenAI billing/quota problem: ${raw}`;
+  }
+
+  if (/rate limit/i.test(raw)) {
+    return `OpenAI rate limit problem: ${raw}`;
+  }
+
+  return raw;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -355,7 +373,6 @@ export async function generateAssistantReply(params: {
     return { ok: true, text };
   } catch (err) {
     console.error("[ai/chat] OpenAI API error:", err);
-    const message = err instanceof Error ? err.message : "AI model call failed";
-    return { ok: false, message };
+    return { ok: false, message: userFriendlyOpenAiError(err) };
   }
 }

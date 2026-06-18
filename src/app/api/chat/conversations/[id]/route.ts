@@ -11,10 +11,56 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type AttachmentRow = {
+  id: number;
+  messageId: number;
+  type: "image";
+  name: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  sizeBytes: number;
+  dataUrl: string;
+  createdAt: Date;
+};
+
 /** Parse and validate the route param `id` as a positive integer. */
 function parseId(raw: string): number | null {
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function loadAttachmentsByMessageId(messageIds: number[]) {
+  const byMessageId = new Map<number, Omit<AttachmentRow, "messageId">[]>();
+  if (messageIds.length === 0) return byMessageId;
+
+  try {
+    const placeholders = messageIds.map((_, index) => `$${index + 1}`).join(", ");
+    const rows = await prisma.$queryRawUnsafe<AttachmentRow[]>(
+      `SELECT "id", "messageId", "type", "name", "mimeType", "sizeBytes", "dataUrl", "createdAt"
+       FROM "ChatAttachment"
+       WHERE "messageId" IN (${placeholders})
+       ORDER BY "createdAt" ASC`,
+      ...messageIds
+    );
+
+    for (const row of rows) {
+      const existing = byMessageId.get(row.messageId) || [];
+      existing.push({
+        id: row.id,
+        type: row.type,
+        name: row.name,
+        mimeType: row.mimeType,
+        sizeBytes: row.sizeBytes,
+        dataUrl: row.dataUrl,
+        createdAt: row.createdAt,
+      });
+      byMessageId.set(row.messageId, existing);
+    }
+  } catch (err) {
+    // Keep history loading even if attachments are not migrated yet.
+    console.error("[api/chat/conversations] attachment load failed:", err);
+  }
+
+  return byMessageId;
 }
 
 export async function GET(
@@ -58,6 +104,10 @@ export async function GET(
     select: { id: true, role: true, content: true, createdAt: true },
   });
 
+  const attachmentsByMessageId = await loadAttachmentsByMessageId(
+    messages.map((message) => message.id)
+  );
+
   return NextResponse.json({
     ok: true,
     conversation: {
@@ -66,7 +116,10 @@ export async function GET(
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
     },
-    messages,
+    messages: messages.map((message) => ({
+      ...message,
+      attachments: attachmentsByMessageId.get(message.id) || [],
+    })),
   });
 }
 
@@ -104,7 +157,7 @@ export async function DELETE(
     );
   }
 
-  // ChatMessages are deleted via onDelete: Cascade in the schema
+  // ChatMessages and image attachments are deleted via cascade.
   await prisma.conversation.delete({ where: { id } });
 
   return NextResponse.json({ ok: true });

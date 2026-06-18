@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n";
 
 type StaffMember = {
@@ -28,9 +27,32 @@ type Team = {
   league: string | null;
 };
 
+type TeamMembership = {
+  id: number;
+  role: string;
+  status: string;
+  createdAt: string;
+  team: {
+    id: number;
+    name: string;
+  };
+};
+
+type StaffUser = {
+  id: number;
+  name: string | null;
+  email: string;
+  role: string | null;
+  teamMemberships?: TeamMembership[];
+};
+
+type PendingInvitation = {
+  id: number;
+  status: string;
+};
+
 export default function AdminStaffPage() {
   const { t } = useTranslation();
-  const router = useRouter();
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
@@ -41,7 +63,7 @@ export default function AdminStaffPage() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [pendingInvitations, setPendingInvitations] = useState<any[]>([]);
+  const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
 
   const roles = [
     "Head Coach",
@@ -64,7 +86,7 @@ export default function AdminStaffPage() {
   async function fetchTeams() {
     try {
       const res = await fetch("/api/teams");
-      const data = await res.json();
+      const data = (await res.json()) as { ok?: boolean; teams?: Team[] };
       if (data.ok && data.teams) {
         setTeams(data.teams);
         if (data.teams.length > 0 && !inviteTeamId) {
@@ -83,16 +105,16 @@ export default function AdminStaffPage() {
         ? `/api/admin/teams/${selectedTeam}/staff`
         : "/api/admin/staff";
       const res = await fetch(url);
-      const data = await res.json();
+      const data = (await res.json()) as { ok?: boolean; staff?: StaffMember[] | StaffUser[] };
       if (data.ok) {
         if (selectedTeam && data.staff) {
-          setStaff(data.staff);
+          setStaff(data.staff as StaffMember[]);
         } else if (data.staff) {
           // Flatten staff from all teams
           const allStaff: StaffMember[] = [];
-          data.staff.forEach((user: any) => {
+          (data.staff as StaffUser[]).forEach((user) => {
             if (user.teamMemberships) {
-              user.teamMemberships.forEach((membership: any) => {
+              user.teamMemberships.forEach((membership) => {
                 allStaff.push({
                   id: membership.id,
                   userId: user.id,
@@ -125,9 +147,9 @@ export default function AdminStaffPage() {
     if (!teamId) return;
     try {
       const res = await fetch(`/api/invitations?teamId=${teamId}`);
-      const data = await res.json();
+      const data = (await res.json()) as { ok?: boolean; invitations?: PendingInvitation[] };
       if (data.ok && data.invitations) {
-        setPendingInvitations(data.invitations.filter((inv: any) => inv.status === "pending"));
+        setPendingInvitations(data.invitations.filter((invitation) => invitation.status === "pending"));
       }
     } catch (err) {
       console.error("Failed to fetch invitations:", err);

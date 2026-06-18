@@ -6,8 +6,14 @@ import { calculateXG } from "@/lib/analytics";
 export const runtime = "nodejs";
 
 // Cache invalidation helper (shared with analytics route)
+type AnalyticsCacheEntry = {
+  data: unknown;
+  timestamp: number;
+  eventCount: number;
+};
+
 declare global {
-  var analyticsCache: Map<string, { data: any; timestamp: number; eventCount: number }> | undefined;
+  var analyticsCache: Map<string, AnalyticsCacheEntry> | undefined;
 }
 
 function invalidateAnalyticsCache(matchId: number) {

@@ -17,6 +17,8 @@ type Match = {
   scoreAway: number | null;
 };
 
+type MatchResponseItem = Match;
+
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [matches, setMatches] = useState<Match[]>([]);
@@ -34,10 +36,10 @@ export default function CalendarPage() {
       try {
         const res = await fetch("/api/matches");
         if (res.ok) {
-          const data = await res.json();
+          const data = (await res.json()) as { ok?: boolean; matches?: MatchResponseItem[] };
           if (data.ok && Array.isArray(data.matches)) {
             // Ensure all matches have safe team data
-            const safeMatches = data.matches.map((match: any) => ({
+            const safeMatches = data.matches.map((match) => ({
               ...match,
               homeTeam: match.homeTeam || null,
               awayTeam: match.awayTeam || null,

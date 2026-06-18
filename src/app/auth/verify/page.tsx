@@ -10,31 +10,37 @@ function VerifyEmailContent() {
   const [message, setMessage] = useState<string>("");
 
   useEffect(() => {
+    const scheduleStatusUpdate = (nextStatus: "idle" | "loading" | "success" | "error", nextMessage: string) => {
+      Promise.resolve().then(() => {
+        setStatus(nextStatus);
+        setMessage(nextMessage);
+      });
+    };
+
     const token = searchParams.get("token");
     if (!token) {
-      setStatus("error");
-      setMessage("Missing verification token.");
+      scheduleStatusUpdate("error", "Missing verification token.");
       return;
     }
 
-    setStatus("loading");
+    Promise.resolve().then(() => {
+      setStatus("loading");
+      setMessage("");
+    });
     (async () => {
       try {
         const res = await fetch(`/api/auth/verify-email?token=${encodeURIComponent(token)}`);
         const data = (await res.json()) as { ok?: boolean; message?: string };
         if (!res.ok || !data.ok) {
-          setStatus("error");
-          setMessage(data.message || "Verification failed.");
+          scheduleStatusUpdate("error", data.message || "Verification failed.");
           return;
         }
-        setStatus("success");
-        setMessage("Your email has been verified. You can now sign in.");
+        scheduleStatusUpdate("success", "Your email has been verified. You can now sign in.");
         setTimeout(() => {
           router.push("/auth/login");
         }, 1500);
       } catch {
-        setStatus("error");
-        setMessage("Network error. Please try again later.");
+        scheduleStatusUpdate("error", "Network error. Please try again later.");
       }
     })();
   }, [router, searchParams]);

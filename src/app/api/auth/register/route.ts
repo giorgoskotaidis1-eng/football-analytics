@@ -68,7 +68,7 @@ export async function POST(request: Request) {
             status: "active",
           },
         });
-      } catch (error: any) {
+      } catch {
         // If UserTeam doesn't exist yet (before migration), just log and continue
         // The team is still created, user just won't be in UserTeam table yet
         console.warn("[register] UserTeam model not available yet. Run migration to enable staff management.");

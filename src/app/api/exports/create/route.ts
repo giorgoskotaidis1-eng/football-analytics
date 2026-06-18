@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "No teams found. Create a team first." }, { status: 400 });
     }
 
-    let data: any[] = [];
+    let data: Array<Record<string, unknown>> = [];
     let filename = "";
 
     if (source === "matches") {

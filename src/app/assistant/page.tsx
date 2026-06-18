@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import toast, { Toaster } from "react-hot-toast";
 import { useTranslation } from "@/lib/i18n";
 
@@ -27,6 +28,7 @@ interface Conversation {
 
 export default function AssistantPage() {
   const { t } = useTranslation();
+  const router = useRouter();
 
   // ── Conversations sidebar state ──────────────────────────────────────────
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -44,6 +46,11 @@ export default function AssistantPage() {
   // ── Scroll anchor ────────────────────────────────────────────────────────
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const handleUnauthorized = useCallback(() => {
+    toast.error(t("sessionExpiredPleaseLogin"));
+    router.push("/auth/login");
+  }, [router, t]);
+
   // ─── Load conversation list ─────────────────────────────────────────────
   // `t` is intentionally NOT in the dependency array — the translation function
   // reference may change on re-render (language toggle), which would trigger
@@ -53,6 +60,10 @@ export default function AssistantPage() {
     try {
       const res = await fetch("/api/chat/conversations");
       const data = await res.json().catch(() => null);
+      if (res.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       if (!res.ok || !data?.ok) {
         toast.error(data?.message || "Failed to load conversations");
         return;
@@ -64,7 +75,7 @@ export default function AssistantPage() {
       setLoadingConversations(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleUnauthorized]);
 
   useEffect(() => {
     void loadConversations();
@@ -85,6 +96,10 @@ export default function AssistantPage() {
     try {
       const res = await fetch(`/api/chat/conversations/${id}`);
       const data = await res.json().catch(() => null);
+      if (res.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       if (!res.ok || !data?.ok) {
         toast.error(data?.message || t("failedToLoadMessages") || "Failed to load messages");
         return;
@@ -95,7 +110,7 @@ export default function AssistantPage() {
     } finally {
       setLoadingMessages(false);
     }
-  }, [t]);
+  }, [handleUnauthorized, t]);
 
   // ─── Start a new conversation ───────────────────────────────────────────
 
@@ -122,6 +137,7 @@ export default function AssistantPage() {
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
@@ -129,6 +145,13 @@ export default function AssistantPage() {
         }),
       });
       const data = await res.json().catch(() => null);
+
+      if (res.status === 401) {
+        setMessages((prev) => prev.slice(0, -1));
+        setInputValue(text);
+        handleUnauthorized();
+        return;
+      }
 
       if (!res.ok || !data?.ok) {
         // Remove the optimistic message on error
@@ -168,6 +191,10 @@ export default function AssistantPage() {
     try {
       const res = await fetch(`/api/chat/conversations/${id}`, { method: "DELETE" });
       const data = await res.json().catch(() => null);
+      if (res.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       if (!res.ok || !data?.ok) {
         toast.error(data?.message || t("failedToDelete") || "Failed to delete");
         return;
@@ -195,6 +222,10 @@ export default function AssistantPage() {
     try {
       const res = await fetch("/api/chat/memories?all=true", { method: "DELETE" });
       const data = await res.json().catch(() => null);
+      if (res.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       if (!res.ok || !data?.ok) {
         toast.error(data?.message || t("failedToClearMemory") || "Failed to clear memory");
         return;

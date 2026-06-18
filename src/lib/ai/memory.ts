@@ -58,6 +58,9 @@ function redactSensitiveData(text: string): string {
 
 // ─── Relevance scoring ───────────────────────────────────────────────────────
 
+/** Milliseconds per day — extracted to avoid redundant arithmetic in the scoring loop. */
+const MS_PER_DAY = 86_400_000;
+
 /**
  * Computes a composite relevance score for a MemoryItem against a user query.
  *
@@ -92,8 +95,7 @@ function scoreRelevance(
         queryTerms.length;
 
   // Recency: exponential decay over 30-day half-life
-  const ageDays =
-    (now - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+  const ageDays = (now - createdAt.getTime()) / MS_PER_DAY;
   const recency = Math.exp(-ageDays / 30);
 
   return overlap * 0.6 + (importanceScore / 10) * 0.25 + recency * 0.15;
@@ -228,7 +230,7 @@ export async function maybeSummarizeConversation(
       userId,
       summary,
       sourceMessageIds: JSON.stringify(messages.map((m) => m.id)),
-      importanceScore: 5, // default mid-range; can be refined with feedback
+      importanceScore: 5, // TODO: adjust via user feedback mechanism (future enhancement)
     },
   });
 }

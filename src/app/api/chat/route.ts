@@ -35,7 +35,9 @@ const MAX_CONVERSATION_TITLE_LENGTH = 60;
 
 const allowedImageMimeTypes = ["image/jpeg", "image/png", "image/webp"] as const;
 const MAX_IMAGE_ATTACHMENTS = 3;
-const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+// Keep this low because data URLs grow ~33% in JSON and Vercel/serverless
+// request bodies can fail before the route even starts.
+const MAX_IMAGE_SIZE_BYTES = 750 * 1024;
 
 const imageAttachmentSchema = z.object({
   type: z.literal("image"),
@@ -45,6 +47,7 @@ const imageAttachmentSchema = z.object({
   dataUrl: z
     .string()
     .min(32)
+    .max(MAX_IMAGE_SIZE_BYTES * 2)
     .refine(
       (value) => /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value),
       "Invalid image data"
@@ -96,8 +99,18 @@ export async function POST(request: NextRequest) {
     const body = (await request.json().catch(() => null)) as unknown;
     const parsed = sendMessageSchema.safeParse(body);
     if (!parsed.success) {
-      const message = parsed.error.issues[0]?.message || "Invalid request body";
-      return NextResponse.json({ ok: false, message }, { status: 400 });
+      const issue = parsed.error.issues[0];
+      const message = issue?.message || "Invalid request body";
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            message === "Too big"
+              ? "Image payload is too large. Please upload a smaller screenshot/photo."
+              : message,
+        },
+        { status: 400 }
+      );
     }
 
     const {

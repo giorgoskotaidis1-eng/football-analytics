@@ -1,10 +1,8 @@
 /**
  * AI chat service — orchestrates prompt construction and OpenAI calls.
  *
- * The OpenAI client is initialised **lazily** (on first call, then memoised)
- * so that `next build` never crashes when OPENAI_API_KEY is absent at
- * build time — consistent with the pattern used in src/lib/auth.ts and
- * src/lib/email.ts.
+ * The OpenAI client is initialised lazily so next build never crashes when
+ * OPENAI_API_KEY is absent at build time.
  *
  * If OPENAI_API_KEY is missing, the assistant automatically falls back to
  * demo mode. Demo mode keeps the UI usable and persists conversations, but it
@@ -26,6 +24,14 @@ export interface MemoryContext {
   importanceScore: number;
 }
 
+export interface ImageAttachmentInput {
+  type: "image";
+  name: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  sizeBytes: number;
+  dataUrl: string;
+}
+
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 /**
@@ -45,20 +51,18 @@ export function isAiConfigured(): boolean {
 }
 
 /**
- * Demo mode is enabled when:
- * - AI_ASSISTANT_DEMO_MODE=true, or
- * - OPENAI_API_KEY is missing.
+ * Demo mode is enabled only when the real AI provider cannot be called.
  *
- * This lets the app run safely without paid API billing during demos.
+ * Important: OPENAI_API_KEY wins over AI_ASSISTANT_DEMO_MODE. This prevents a
+ * stale Vercel env var from keeping the assistant stuck in demo mode after the
+ * user has configured paid API access.
  */
 export function isAiDemoModeEnabled(): boolean {
-  return process.env.AI_ASSISTANT_DEMO_MODE === "true" || !isAiConfigured();
+  return !isAiConfigured();
 }
 
 /**
  * Returns the memoised OpenAI client instance.
- * Throws a clear, user-readable error if OPENAI_API_KEY is missing so the
- * calling route can return a clean 5xx with { ok: false, message }.
  */
 function getClient(): OpenAI {
   if (_client) return _client;
@@ -116,18 +120,22 @@ function buildDemoReply(params: {
   memories: MemoryContext[];
   history: ChatMessage[];
   newUserMessage: string;
+  attachments?: ImageAttachmentInput[];
 }): string {
-  const { memories, history, newUserMessage } = params;
+  const { memories, history, newUserMessage, attachments = [] } = params;
   const hasHistory = history.length > 0;
   const hasMemories = memories.length > 0;
+  const hasAttachments = attachments.length > 0;
 
   return [
-    "🟡 Demo mode is active. The assistant UI, conversations, and database memory plumbing are working, but no real AI model is being called yet.",
+    "🟡 Demo mode is active. The assistant UI, conversations, image upload plumbing, and database memory plumbing are working, but no real AI model is being called yet.",
     "",
-    `Your message was: “${newUserMessage}”`,
+    newUserMessage ? `Your message was: “${newUserMessage}”` : "Your message had no text.",
+    hasAttachments ? `You attached ${attachments.length} image(s). Real visual analysis starts after OPENAI_API_KEY is configured.` : "",
     "",
     "What will happen after you add OPENAI_API_KEY:",
     "- this same chat will call the real OpenAI model",
+    "- uploaded screenshots/photos will be sent to the model for visual analysis",
     "- previous conversation messages will be used as context",
     "- useful long-term memories will be saved per user",
     "- the assistant will give football analytics answers instead of this demo response",
@@ -138,7 +146,9 @@ function buildDemoReply(params: {
     hasMemories
       ? `There are ${memories.length} relevant memory item(s) ready to be injected when real AI mode is enabled.`
       : "No saved memory items were found yet.",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildSystemContent(systemInstructions: string, memories: MemoryContext[]): string {
@@ -152,7 +162,7 @@ function buildSystemContent(systemInstructions: string, memories: MemoryContext[
   return `${systemInstructions}${memorySection}`;
 }
 
-function buildResponsesInput(
+function buildResponsesTextInput(
   systemContent: string,
   history: ChatMessage[],
   newUserMessage: string
@@ -168,6 +178,43 @@ function buildResponsesInput(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function buildResponsesMultimodalInput(params: {
+  systemContent: string;
+  history: ChatMessage[];
+  newUserMessage: string;
+  attachments: ImageAttachmentInput[];
+}) {
+  const { systemContent, history, newUserMessage, attachments } = params;
+
+  return [
+    {
+      role: "system",
+      content: [{ type: "input_text", text: systemContent }],
+    },
+    ...history
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({
+        role: m.role,
+        content: [{ type: "input_text", text: m.content }],
+      })),
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text:
+            newUserMessage ||
+            "Analyze the uploaded football analytics image/screenshot and explain the key insights.",
+        },
+        ...attachments.map((attachment) => ({
+          type: "input_image",
+          image_url: attachment.dataUrl,
+        })),
+      ],
+    },
+  ];
 }
 
 function extractResponsesText(response: unknown): string {
@@ -193,34 +240,70 @@ function extractResponsesText(response: unknown): string {
   return "";
 }
 
+function buildChatCompletionMessages(params: {
+  systemContent: string;
+  history: ChatMessage[];
+  newUserMessage: string;
+  attachments: ImageAttachmentInput[];
+}): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  const { systemContent, history, newUserMessage, attachments } = params;
+
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: systemContent },
+    ...history.map(
+      (m): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
+        role: m.role,
+        content: m.content,
+      })
+    ),
+  ];
+
+  if (attachments.length === 0) {
+    messages.push({ role: "user", content: newUserMessage });
+    return messages;
+  }
+
+  messages.push({
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text:
+          newUserMessage ||
+          "Analyze the uploaded football analytics image/screenshot and explain the key insights.",
+      },
+      ...attachments.map((attachment) => ({
+        type: "image_url" as const,
+        image_url: { url: attachment.dataUrl },
+      })),
+    ],
+  });
+
+  return messages;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-/**
- * Generates an assistant reply given prompt context.
- *
- * Returns a discriminated-union result so callers can handle AI errors
- * without try/catch and can surface a clean { ok: false, message } to the
- * frontend.
- *
- * @param systemInstructions - Base system prompt text.
- * @param memories           - Relevant per-user memories to include as context.
- * @param history            - Recent conversation messages (oldest → newest),
- *                             NOT including the new user message.
- * @param newUserMessage     - The message the user just sent.
- */
 export async function generateAssistantReply(params: {
   systemInstructions: string;
   memories: MemoryContext[];
   history: ChatMessage[];
   newUserMessage: string;
+  attachments?: ImageAttachmentInput[];
 }): Promise<{ ok: true; text: string } | { ok: false; message: string }> {
-  const { systemInstructions, memories, history, newUserMessage } = params;
+  const {
+    systemInstructions,
+    memories,
+    history,
+    newUserMessage,
+    attachments = [],
+  } = params;
 
   // Demo/fallback mode: keep the chat feature usable without paid OpenAI API.
   if (isAiDemoModeEnabled()) {
     return {
       ok: true,
-      text: buildDemoReply({ memories, history, newUserMessage }),
+      text: buildDemoReply({ memories, history, newUserMessage, attachments }),
     };
   }
 
@@ -240,7 +323,15 @@ export async function generateAssistantReply(params: {
     if (shouldUseResponsesApi(model)) {
       const response = await (client.responses as any).create({
         model,
-        input: buildResponsesInput(systemContent, history, newUserMessage),
+        input:
+          attachments.length > 0
+            ? buildResponsesMultimodalInput({
+                systemContent,
+                history,
+                newUserMessage,
+                attachments,
+              })
+            : buildResponsesTextInput(systemContent, history, newUserMessage),
         max_output_tokens: 1024,
       });
 
@@ -251,20 +342,14 @@ export async function generateAssistantReply(params: {
       return { ok: true, text };
     }
 
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: systemContent },
-      ...history.map(
-        (m): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
-          role: m.role,
-          content: m.content,
-        })
-      ),
-      { role: "user", content: newUserMessage },
-    ];
-
     const completion = await client.chat.completions.create({
       model,
-      messages,
+      messages: buildChatCompletionMessages({
+        systemContent,
+        history,
+        newUserMessage,
+        attachments,
+      }),
       max_tokens: 1024,
       temperature: 0.7,
     });
@@ -276,8 +361,7 @@ export async function generateAssistantReply(params: {
     return { ok: true, text };
   } catch (err) {
     console.error("[ai/chat] OpenAI API error:", err);
-    const message =
-      err instanceof Error ? err.message : "AI model call failed";
+    const message = err instanceof Error ? err.message : "AI model call failed";
     return { ok: false, message };
   }
 }

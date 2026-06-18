@@ -101,12 +101,15 @@ export async function POST(request: NextRequest) {
   });
 
   // ── Step 4: Load recent conversation history ──────────────────────────────
+  // Fetch last HISTORY_LIMIT messages (desc for recency, then reverse for
+  // chronological order expected by the AI prompt builder).
   const recentMessages = await prisma.chatMessage.findMany({
     where: { conversationId },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
     take: HISTORY_LIMIT,
     select: { role: true, content: true },
   });
+  recentMessages.reverse(); // oldest → newest
 
   // Exclude the message we just saved from history (it goes as the user turn)
   const history = recentMessages.slice(0, -1);

@@ -61,6 +61,7 @@ export function SidebarNav() {
     { href: "/playlist", label: t("videoLibrary"), icon: "🎬" },
     { href: "/sensevs", label: t("matchComparison"), icon: "🔍" },
     { href: "/files", label: t("files"), icon: "📁" },
+    { href: "/assistant", label: t("aiAssistant") || "AI Assistant", icon: "🤖" },
   ];
 
   const adminNavItems = isAdmin ? [

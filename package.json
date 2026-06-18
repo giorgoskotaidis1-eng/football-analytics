@@ -42,6 +42,7 @@
     "jspdf-autotable": "^5.0.2",
     "multer": "^2.0.2",
     "next": "16.2.7",
+    "openai": "^6.44.0",
     "papaparse": "^5.5.3",
     "prisma": "^6.19.0",
     "react": "19.2.0",

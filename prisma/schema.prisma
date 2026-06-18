@@ -52,6 +52,11 @@ model User {
   dataExports      DataExport[]
   supportTickets   SupportTicket[]
 
+  // AI chatbot relations
+  conversations    Conversation[]
+  chatMessages     ChatMessage[]
+  memoryItems      MemoryItem[]
+
   @@index([email])
   @@index([role])
 }
@@ -518,4 +523,57 @@ model Notification {
   @@index([userId])
   @@index([read])
   @@index([createdAt])
+}
+
+// ─── AI Chatbot models ──────────────────────────────────────────────────────
+
+/// A conversation thread between a user and the AI assistant.
+model Conversation {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Title derived from the first message (truncated).
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages  ChatMessage[]
+
+  @@index([userId])
+  @@index([userId, updatedAt])
+}
+
+/// Individual chat message inside a conversation.
+/// Named ChatMessage (not Message) to avoid collision with the staff Message model.
+model ChatMessage {
+  id             Int          @id @default(autoincrement())
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /// "user" | "assistant" | "system"
+  role           String
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+/// A piece of long-term memory distilled from a user's conversations.
+model MemoryItem {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Concise summary of the remembered fact.
+  summary          String
+  /// JSON-encoded array of ChatMessage ids that contributed to this memory.
+  sourceMessageIds String   @default("[]")
+  /// 0–10 importance score; higher = more likely to be retrieved.
+  importanceScore  Float    @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId, importanceScore])
+  @@index([userId, createdAt])
 }

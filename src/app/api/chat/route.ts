@@ -7,7 +7,7 @@
  *  3. Save user ChatMessage
  *  4. Load recent conversation history
  *  5. Fetch relevant MemoryItems for this user
- *  6. Build prompt (system + memories + history + new message)
+ *  6. Build prompt (system + memories + history + new message + optional images)
  *  7. Call AI model
  *  8. Save assistant ChatMessage
  *  9. Attempt to summarise for memory (non-fatal)
@@ -32,13 +32,38 @@ const MEMORY_TIMEOUT_MS = 1200;
 // Max characters for auto-generated conversation title from first message
 const MAX_CONVERSATION_TITLE_LENGTH = 60;
 
-const sendMessageSchema = z.object({
-  conversationId: z.number().int().positive().optional(),
-  message: z.string().trim().min(1, "Message cannot be empty").max(4000),
+const allowedImageMimeTypes = ["image/jpeg", "image/png", "image/webp"] as const;
+const MAX_IMAGE_ATTACHMENTS = 3;
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+
+const imageAttachmentSchema = z.object({
+  type: z.literal("image"),
+  name: z.string().trim().min(1).max(160),
+  mimeType: z.enum(allowedImageMimeTypes),
+  sizeBytes: z.number().int().positive().max(MAX_IMAGE_SIZE_BYTES),
+  dataUrl: z
+    .string()
+    .min(32)
+    .refine(
+      (value) => /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value),
+      "Invalid image data"
+    ),
 });
+
+const sendMessageSchema = z
+  .object({
+    conversationId: z.number().int().positive().optional(),
+    message: z.string().trim().max(4000).optional().default(""),
+    attachments: z.array(imageAttachmentSchema).max(MAX_IMAGE_ATTACHMENTS).optional().default([]),
+  })
+  .refine((data) => data.message.length > 0 || data.attachments.length > 0, {
+    message: "Message or image attachment is required",
+  });
 
 const SYSTEM_INSTRUCTIONS = `You are a professional football analytics assistant embedded in a football analytics platform.
 You help coaches, analysts, and scouts by answering questions about match data, player statistics, team performance, and football tactics.
+You can also analyse uploaded images and screenshots, including football statistics tables, dashboards, tactical screenshots, heatmaps, charts, lineups, reports, and match frames.
+When an image is provided, describe what is visible, extract the key football data, explain the tactical or analytical meaning, and clearly mention if the image is unclear or incomplete.
 Be concise, precise, and professional. Use football terminology correctly.
 If you don't know something, say so clearly rather than guessing.
 Never reveal, store, or repeat passwords, API keys, tokens, or any sensitive personal credentials.`;
@@ -57,12 +82,15 @@ export async function POST(request: NextRequest) {
     const body = (await request.json().catch(() => null)) as unknown;
     const parsed = sendMessageSchema.safeParse(body);
     if (!parsed.success) {
-      const message =
-        parsed.error.issues[0]?.message || "Invalid request body";
+      const message = parsed.error.issues[0]?.message || "Invalid request body";
       return NextResponse.json({ ok: false, message }, { status: 400 });
     }
 
-    const { message: newMessage, conversationId: requestedConvId } = parsed.data;
+    const {
+      message: newMessage,
+      conversationId: requestedConvId,
+      attachments,
+    } = parsed.data;
 
     // ── Step 2: Resolve or create Conversation ────────────────────────────────
     let conversationId: number;
@@ -91,10 +119,11 @@ export async function POST(request: NextRequest) {
         console.error("[api/chat] conversation touch failed:", err);
       }
     } else {
-      // Create a new conversation titled from the first message
+      // Create a new conversation titled from the first message or image upload
+      const titleSource = newMessage || "Image analysis";
       const title =
-        newMessage.slice(0, MAX_CONVERSATION_TITLE_LENGTH) +
-        (newMessage.length > MAX_CONVERSATION_TITLE_LENGTH ? "…" : "");
+        titleSource.slice(0, MAX_CONVERSATION_TITLE_LENGTH) +
+        (titleSource.length > MAX_CONVERSATION_TITLE_LENGTH ? "…" : "");
       const created = await prisma.conversation.create({
         data: { userId, title },
       });
@@ -102,12 +131,6 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Steps 3 + 4: Load history first, then save user message ─────────────
-    // History is loaded BEFORE saving the new user message so we don't need to
-    // exclude it from the prompt — it is passed separately as `newUserMessage`.
-    //
-    // `orderBy: desc + take: N + reverse()` fetches the most-recent N messages
-    // in chronological order. Using `orderBy: asc + take: N` would instead
-    // return the OLDEST N messages, which is wrong for long conversations.
     const historyMessages = await prisma.chatMessage.findMany({
       where: { conversationId },
       orderBy: { createdAt: "desc" },
@@ -116,13 +139,19 @@ export async function POST(request: NextRequest) {
     });
     historyMessages.reverse(); // oldest → newest (chronological order for AI)
 
+    const persistedUserContent =
+      newMessage ||
+      `[Image attachment${attachments.length > 1 ? "s" : ""}: ${attachments
+        .map((attachment) => attachment.name)
+        .join(", ")}]`;
+
     try {
       await prisma.chatMessage.create({
         data: {
           userId,
           conversationId,
           role: "user",
-          content: newMessage,
+          content: persistedUserContent,
         },
       });
     } catch (err) {
@@ -132,17 +161,19 @@ export async function POST(request: NextRequest) {
     // ── Step 5: Fetch relevant memories for this user ─────────────────────────
     let memories: Awaited<ReturnType<typeof getRelevantMemories>> = [];
     try {
-      const memoryFetch = getRelevantMemories(userId, newMessage, MEMORY_LIMIT).catch(
-        (err) => {
-          console.error("[api/chat] getRelevantMemories error:", err);
-          return [];
+      const memoryFetch = getRelevantMemories(
+        userId,
+        newMessage || persistedUserContent,
+        MEMORY_LIMIT
+      ).catch((err) => {
+        console.error("[api/chat] getRelevantMemories error:", err);
+        return [];
+      });
+      const timeoutFallback = new Promise<Awaited<ReturnType<typeof getRelevantMemories>>>(
+        (resolve) => {
+          setTimeout(() => resolve([]), MEMORY_TIMEOUT_MS);
         }
       );
-      const timeoutFallback = new Promise<
-        Awaited<ReturnType<typeof getRelevantMemories>>
-      >((resolve) => {
-        setTimeout(() => resolve([]), MEMORY_TIMEOUT_MS);
-      });
       memories = await Promise.race([memoryFetch, timeoutFallback]);
     } catch (err) {
       console.error("[api/chat] getRelevantMemories error:", err);
@@ -156,11 +187,13 @@ export async function POST(request: NextRequest) {
         role: m.role as "user" | "assistant" | "system",
         content: m.content,
       })),
-      newUserMessage: newMessage,
+      newUserMessage:
+        newMessage ||
+        "Analyze the uploaded football analytics image/screenshot and explain the key insights.",
+      attachments,
     });
 
-    // Use `in` narrowing because tsconfig has strict:false (boolean discriminants
-    // are not reliably narrowed without strictNullChecks).
+    // Use `in` narrowing because tsconfig has strict:false.
     const assistantText = "text" in aiResult ? aiResult.text : null;
     if (!assistantText) {
       const errMsg = "message" in aiResult ? aiResult.message : "AI error";

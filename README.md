@@ -26,6 +26,7 @@ npm run setup-env-mac
 - **AI Video Analysis** - Automatic event detection from match videos
 - **AI Assistant Demo Mode** - Chatbot UI works without paid API billing while testing
 - **AI Assistant Image Analysis** - Upload JPG, PNG, or WebP screenshots/photos inside the assistant chat
+- **AI Assistant App Guidance** - The assistant knows the app routes and can guide users to the right feature/page
 - **Player Statistics** - Auto-calculated stats from match events
 - **Admin Panel** - Complete team and player management
 - **Player Dashboard** - Individual player profiles with highlights and heatmaps
@@ -86,7 +87,7 @@ Private project - All rights reserved
 
 ## 🤖 AI Assistant (chatbot with memory)
 
-An AI-powered chat assistant is built into the app at `/assistant`. It answers football analytics questions, remembers useful context per user, supports image/screenshot analysis, and keeps all data strictly partitioned per user.
+An AI-powered chat assistant is built into the app at `/assistant`. It answers football analytics questions, remembers useful context per user, supports image/screenshot analysis, guides users inside the app, and keeps all data strictly partitioned per user.
 
 ### Demo mode first, paid AI later
 
@@ -110,7 +111,7 @@ Do not commit the actual key to GitHub.
 
 ### 1. Database migration
 
-After pulling this branch, apply the new Prisma models (`Conversation`, `ChatMessage`, `MemoryItem`) to your database:
+After pulling this branch, apply the new assistant database tables (`Conversation`, `ChatMessage`, `MemoryItem`, and `ChatAttachment`) to your database:
 
 ```bash
 # Recommended for local development:
@@ -170,10 +171,28 @@ How it works:
 - The UI shows image previews before sending.
 - Images are sent to `/api/chat` as base64 data URLs together with the text message.
 - The AI receives both the text and the images and can analyse screenshots, stats tables, dashboards, tactical images, and football reports.
-- This first version does not require Vercel Blob or extra storage keys.
-- Image previews are shown in the current chat session; long-term persistent image storage can be added later with Vercel Blob.
+- The images are also stored as `ChatAttachment` rows linked to the user message, so they can be reloaded in conversation history.
+- This first version does not require Vercel Blob or extra storage keys. For heavy production usage, move image storage to Vercel Blob or another object-storage provider.
 
-### 4. How the memory system works
+### 4. App guidance support
+
+The assistant has a structured app context file at:
+
+```text
+src/lib/ai/app-context.ts
+```
+
+It describes the main app routes and common user tasks. When a user asks where to find something or how to complete a task, the assistant should guide them to the correct page and explain the steps, for example:
+
+- `/assistant` for AI chat and screenshot analysis
+- `/players` for player profiles and player analysis
+- `/matches` for match data and match analysis
+- `/reports` for tactical/scouting reports
+- `/scouting` for recruitment and player fit workflows
+- `/messages` for staff-to-staff messages
+- `/settings` for account/app configuration
+
+### 5. How the memory system works
 
 - **Per-conversation history**: every user message and assistant reply is saved to the `ChatMessage` table, linked to a `Conversation` owned by the user.
 - **MemoryItems**: when real AI mode is enabled, every 6 messages in a conversation, the assistant automatically distils useful long-term facts into a `MemoryItem` summary for that user.
@@ -184,20 +203,22 @@ How it works:
   - All queries are scoped by `userId` — memory never leaks between users.
 - **Clearing**: users can delete individual conversations or click "Clear all history & memory" in the assistant UI to wipe everything.
 
-### 5. How to test the chatbot
+### 6. How to test the chatbot
 
 1. Start the development server: `npm run dev`
 2. Sign in and navigate to `/assistant`.
 3. Send a message. Without an OpenAI API key, you should receive the demo-mode response.
 4. Attach a JPG/PNG/WebP screenshot and send it with a question.
 5. With `OPENAI_API_KEY` configured, the assistant should analyse the image.
-6. Confirm the message is saved in `ChatMessage`.
-7. Later, add the OpenAI API key, redeploy/restart, and test a real football analytics question with an image.
+6. Ask: "Where do I create a scouting report?" and confirm the assistant guides you to `/reports`.
+7. Confirm the message is saved in `ChatMessage` and the image is saved in `ChatAttachment`.
+8. Later, add the OpenAI API key, redeploy/restart, and test a real football analytics question with an image.
 
 **Verify rows in the database** (using `psql` or Prisma Studio `npx prisma studio`):
 
 ```sql
 SELECT * FROM "Conversation" ORDER BY "createdAt" DESC LIMIT 10;
 SELECT * FROM "ChatMessage" ORDER BY "createdAt" DESC LIMIT 20;
+SELECT * FROM "ChatAttachment" ORDER BY "createdAt" DESC LIMIT 20;
 SELECT * FROM "MemoryItem" ORDER BY "createdAt" DESC LIMIT 10;
 ```

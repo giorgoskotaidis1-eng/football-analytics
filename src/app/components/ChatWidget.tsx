@@ -8,12 +8,22 @@ import { useTranslation } from "@/lib/i18n";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MessageRole = "user" | "assistant";
+type ImageMimeType = "image/jpeg" | "image/png" | "image/webp";
+
+interface ChatAttachment {
+  type: "image";
+  name: string;
+  mimeType: ImageMimeType;
+  sizeBytes: number;
+  dataUrl: string;
+}
 
 interface ChatMessage {
   id?: number;
   role: MessageRole;
   content: string;
   createdAt?: string;
+  attachments?: ChatAttachment[];
 }
 
 interface Conversation {
@@ -22,6 +32,119 @@ interface Conversation {
   messageCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+const ALLOWED_IMAGE_TYPES: ImageMimeType[] = ["image/jpeg", "image/png", "image/webp"];
+const MAX_IMAGE_ATTACHMENTS = 3;
+const MAX_COMPRESSED_IMAGE_BYTES = 650 * 1024;
+const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024;
+const TARGET_IMAGE_SIZES = [1600, 1200, 900, 700];
+const JPEG_QUALITIES = [0.82, 0.72, 0.62, 0.52, 0.42];
+
+function isAllowedImageType(type: string): type is ImageMimeType {
+  return ALLOWED_IMAGE_TYPES.includes(type as ImageMimeType);
+}
+
+function dataUrlByteSize(dataUrl: string): number {
+  const base64 = dataUrl.split(",")[1] || "";
+  return Math.ceil((base64.length * 3) / 4);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("Invalid file result"));
+    };
+    reader.onerror = () => reject(reader.error || new Error("Unable to read file"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function loadImageFromFile(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Unable to load image"));
+    };
+    img.src = objectUrl;
+  });
+}
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: ImageMimeType,
+  quality: number
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Unable to compress image"));
+          return;
+        }
+        resolve(blob);
+      },
+      type,
+      quality
+    );
+  });
+}
+
+function safeImageName(name: string, mimeType: ImageMimeType): string {
+  const base = name.replace(/\.[^.]+$/, "").slice(0, 120) || "chat-image";
+  const extension = mimeType === "image/webp" ? "webp" : "jpg";
+  return `${base}.${extension}`;
+}
+
+async function compressImageFile(file: File): Promise<ChatAttachment> {
+  const img = await loadImageFromFile(file);
+  const outputType: ImageMimeType = file.type === "image/webp" ? "image/webp" : "image/jpeg";
+
+  for (const maxSide of TARGET_IMAGE_SIZES) {
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    const width = Math.max(1, Math.round(img.width * scale));
+    const height = Math.max(1, Math.round(img.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas is not supported");
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+
+    for (const quality of JPEG_QUALITIES) {
+      const blob = await canvasToBlob(canvas, outputType, quality);
+      const dataUrl = await blobToDataUrl(blob);
+      const sizeBytes = dataUrlByteSize(dataUrl);
+
+      if (sizeBytes <= MAX_COMPRESSED_IMAGE_BYTES) {
+        return {
+          type: "image",
+          name: safeImageName(file.name, outputType),
+          mimeType: outputType,
+          sizeBytes,
+          dataUrl,
+        };
+      }
+    }
+  }
+
+  throw new Error("Image is still too large after compression");
 }
 
 // ─── ChatWidget ───────────────────────────────────────────────────────────────
@@ -43,12 +166,15 @@ export function ChatWidget() {
 
   // ── Input ────────────────────────────────────────────────────────────────
   const [inputValue, setInputValue] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [sending, setSending] = useState(false);
+  const [processingImages, setProcessingImages] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUnauthorized = useCallback(() => {
-    toast.error(t("sessionExpiredPleaseLogin"));
+    toast.error(t("sessionExpiredPleaseLogin") || "Session expired. Please log in again.");
     router.push("/auth/login");
   }, [router, t]);
 
@@ -71,14 +197,12 @@ export function ChatWidget() {
     }
   }, [handleUnauthorized]);
 
-  // Load conversations when widget opens for the first time
   useEffect(() => {
     if (open) {
       void loadConversations();
     }
   }, [open, loadConversations]);
 
-  // Auto-scroll to latest message
   useEffect(() => {
     if (open) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -91,6 +215,7 @@ export function ChatWidget() {
     setShowConvList(false);
     setLoadingMessages(true);
     setMessages([]);
+    setAttachments([]);
     try {
       const res = await fetch(`/api/chat/conversations/${id}`);
       const data = await res.json().catch(() => null);
@@ -115,19 +240,85 @@ export function ChatWidget() {
     setActiveConversationId(null);
     setMessages([]);
     setInputValue("");
+    setAttachments([]);
     setShowConvList(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function handleFileChange(files: FileList | null) {
+    if (!files || files.length === 0) return;
+
+    const incoming = Array.from(files);
+    const availableSlots = MAX_IMAGE_ATTACHMENTS - attachments.length;
+
+    if (availableSlots <= 0) {
+      toast.error(`You can attach up to ${MAX_IMAGE_ATTACHMENTS} images per message.`);
+      return;
+    }
+
+    const acceptedFiles = incoming.slice(0, availableSlots);
+    if (incoming.length > acceptedFiles.length) {
+      toast.error(`Only ${MAX_IMAGE_ATTACHMENTS} images can be attached per message.`);
+    }
+
+    const nextAttachments: ChatAttachment[] = [];
+    setProcessingImages(true);
+    const loadingToast = toast.loading("Preparing image for AI analysis...");
+
+    try {
+      for (const file of acceptedFiles) {
+        if (!isAllowedImageType(file.type)) {
+          toast.error(`${file.name} is not supported. Use JPG, PNG or WebP.`);
+          continue;
+        }
+
+        if (file.size > MAX_SOURCE_IMAGE_BYTES) {
+          toast.error(`${file.name} is too large. Use an image under 10MB.`);
+          continue;
+        }
+
+        try {
+          const compressed = await compressImageFile(file);
+          nextAttachments.push(compressed);
+        } catch {
+          toast.error(`${file.name} could not be compressed enough. Try a smaller screenshot.`);
+        }
+      }
+    } finally {
+      toast.dismiss(loadingToast);
+      setProcessingImages(false);
+    }
+
+    if (nextAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...nextAttachments]);
+      toast.success(`${nextAttachments.length} image(s) ready for analysis.`);
+    }
+
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function removeAttachment(index: number) {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
   }
 
   // ─── Send message ────────────────────────────────────────────────────────
   async function handleSend(e: FormEvent) {
     e.preventDefault();
     const text = inputValue.trim();
-    if (!text || sending) return;
+    const outgoingAttachments = attachments;
+
+    if ((!text && outgoingAttachments.length === 0) || sending || processingImages) return;
 
     setSending(true);
-    const optimistic: ChatMessage = { role: "user", content: text };
+    const optimistic: ChatMessage = {
+      role: "user",
+      content: text || "[Image attached]",
+      attachments: outgoingAttachments,
+    };
     setMessages((prev) => [...prev, optimistic]);
     setInputValue("");
+    setAttachments([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
 
     try {
       const res = await fetch("/api/chat", {
@@ -137,6 +328,7 @@ export function ChatWidget() {
         body: JSON.stringify({
           message: text,
           conversationId: activeConversationId ?? undefined,
+          attachments: outgoingAttachments,
         }),
       });
       const data = await res.json().catch(() => null);
@@ -144,6 +336,7 @@ export function ChatWidget() {
       if (res.status === 401) {
         setMessages((prev) => prev.slice(0, -1));
         setInputValue(text);
+        setAttachments(outgoingAttachments);
         handleUnauthorized();
         return;
       }
@@ -152,6 +345,7 @@ export function ChatWidget() {
         setMessages((prev) => prev.slice(0, -1));
         toast.error(data?.message || t("failedToSendMessage") || "Failed to send message");
         setInputValue(text);
+        setAttachments(outgoingAttachments);
         return;
       }
 
@@ -169,6 +363,7 @@ export function ChatWidget() {
       setMessages((prev) => prev.slice(0, -1));
       toast.error(t("anErrorOccurred") || "An error occurred");
       setInputValue(text);
+      setAttachments(outgoingAttachments);
     } finally {
       setSending(false);
     }
@@ -224,6 +419,8 @@ export function ChatWidget() {
     }
   }
 
+  const canSend = inputValue.trim().length > 0 || attachments.length > 0;
+
   // ─── Render ──────────────────────────────────────────────────────────────
   return (
     <>
@@ -241,8 +438,8 @@ export function ChatWidget() {
       {/* Popup panel */}
       {open && (
         <div
-          className="fixed bottom-20 right-5 z-50 flex w-80 sm:w-96 flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 shadow-2xl"
-          style={{ height: "480px" }}
+          className="fixed bottom-20 right-5 z-50 flex w-80 flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 shadow-2xl sm:w-96"
+          style={{ height: "520px" }}
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-3 py-2.5">
@@ -320,7 +517,7 @@ export function ChatWidget() {
           ) : (
             /* Chat area */
             <>
-              <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+              <div className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
                 {messages.length === 0 && !loadingMessages && (
                   <div className="flex h-full flex-col items-center justify-center text-center">
                     <span className="text-3xl">🤖</span>
@@ -328,7 +525,7 @@ export function ChatWidget() {
                       {t("assistantWelcome") || "How can I help you today?"}
                     </p>
                     <p className="mt-1 text-[10px] text-slate-500">
-                      {t("assistantExamples") || "Ask about stats, tactics or match data."}
+                      {t("assistantExamples") || "Ask about stats, tactics, match data, or attach a screenshot."}
                     </p>
                   </div>
                 )}
@@ -356,32 +553,88 @@ export function ChatWidget() {
               {/* Input bar */}
               <form
                 onSubmit={(e) => void handleSend(e)}
-                className="flex items-end gap-2 border-t border-slate-800 px-2 py-2"
+                className="space-y-2 border-t border-slate-800 px-2 py-2"
               >
-                <textarea
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void handleSend(e as unknown as FormEvent);
+                {attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-2 rounded-xl border border-slate-800 bg-slate-900/60 p-2">
+                    {attachments.map((attachment, index) => (
+                      <div
+                        key={`${attachment.name}-${index}`}
+                        className="relative overflow-hidden rounded-lg border border-slate-700 bg-slate-900"
+                      >
+                        <img
+                          src={attachment.dataUrl}
+                          alt={attachment.name}
+                          className="h-16 w-16 object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(index)}
+                          disabled={sending || processingImages}
+                          className="absolute right-1 top-1 rounded-full bg-slate-950/80 px-1.5 text-[10px] text-slate-100 hover:bg-red-500"
+                          title="Remove image"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-end gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    multiple
+                    className="hidden"
+                    onChange={(event) => void handleFileChange(event.target.files)}
+                  />
+
+                  <button
+                    type="button"
+                    disabled={sending || processingImages || attachments.length >= MAX_IMAGE_ATTACHMENTS}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-600 bg-slate-900 text-base text-slate-100 hover:border-emerald-500 hover:text-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Attach image or screenshot"
+                    aria-label="Attach image or screenshot"
+                  >
+                    📎
+                  </button>
+
+                  <textarea
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleSend(e as unknown as FormEvent);
+                      }
+                    }}
+                    placeholder={
+                      processingImages
+                        ? "Preparing image..."
+                        : t("typeYourMessage") || "Type a message… (Enter to send)"
                     }
-                  }}
-                  placeholder={t("typeYourMessage") || "Type a message… (Enter to send)"}
-                  rows={1}
-                  maxLength={4000}
-                  disabled={sending}
-                  className="min-h-[34px] flex-1 resize-none rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/60 disabled:opacity-60"
-                  style={{ maxHeight: "6rem", overflowY: "auto" }}
-                />
-                <button
-                  type="submit"
-                  disabled={sending || !inputValue.trim()}
-                  className="h-8 w-8 shrink-0 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center"
-                  title={t("send") || "Send"}
-                >
-                  ↑
-                </button>
+                    rows={1}
+                    maxLength={4000}
+                    disabled={sending || processingImages}
+                    className="min-h-[34px] flex-1 resize-none rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/60 disabled:opacity-60"
+                    style={{ maxHeight: "6rem", overflowY: "auto" }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={sending || processingImages || !canSend}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={t("send") || "Send"}
+                  >
+                    ↑
+                  </button>
+                </div>
+
+                <p className="text-[9px] text-slate-500">
+                  Attach JPG, PNG or WebP screenshots. Up to {MAX_IMAGE_ATTACHMENTS} compressed images.
+                </p>
               </form>
             </>
           )}
@@ -404,6 +657,18 @@ function WidgetMessageBubble({ message }: { message: ChatMessage }) {
             : "rounded-tl-sm border border-slate-700 bg-slate-800 text-slate-100"
         }`}
       >
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {message.attachments.map((attachment, index) => (
+              <img
+                key={`${attachment.name}-${index}`}
+                src={attachment.dataUrl}
+                alt={attachment.name}
+                className="max-h-44 max-w-full rounded-lg border border-slate-700 object-contain"
+              />
+            ))}
+          </div>
+        )}
         <p className="whitespace-pre-wrap break-words">{message.content}</p>
         {message.createdAt && (
           <p className={`mt-0.5 text-[9px] ${isUser ? "text-emerald-900/60" : "text-slate-500"}`}>

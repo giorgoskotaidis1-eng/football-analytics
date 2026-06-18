@@ -37,13 +37,23 @@ interface Conversation {
 
 const ALLOWED_IMAGE_TYPES: ImageMimeType[] = ["image/jpeg", "image/png", "image/webp"];
 const MAX_IMAGE_ATTACHMENTS = 3;
-const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+// The server validates compressed payloads around this size. Data URLs inflate
+// images, so keep files small before they hit Vercel/serverless body limits.
+const MAX_COMPRESSED_IMAGE_BYTES = 650 * 1024;
+const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024;
+const TARGET_IMAGE_SIZES = [1600, 1200, 900, 700];
+const JPEG_QUALITIES = [0.82, 0.72, 0.62, 0.52, 0.42];
 
 function isAllowedImageType(type: string): type is ImageMimeType {
   return ALLOWED_IMAGE_TYPES.includes(type as ImageMimeType);
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
+function dataUrlByteSize(dataUrl: string): number {
+  const base64 = dataUrl.split(",")[1] || "";
+  return Math.ceil((base64.length * 3) / 4);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -54,8 +64,91 @@ function readFileAsDataUrl(file: File): Promise<string> {
       reject(new Error("Invalid file result"));
     };
     reader.onerror = () => reject(reader.error || new Error("Unable to read file"));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
+}
+
+function loadImageFromFile(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Unable to load image"));
+    };
+    img.src = objectUrl;
+  });
+}
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: ImageMimeType,
+  quality: number
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Unable to compress image"));
+          return;
+        }
+        resolve(blob);
+      },
+      type,
+      quality
+    );
+  });
+}
+
+function safeImageName(name: string, mimeType: ImageMimeType): string {
+  const base = name.replace(/\.[^.]+$/, "").slice(0, 120) || "chat-image";
+  const extension = mimeType === "image/webp" ? "webp" : "jpg";
+  return `${base}.${extension}`;
+}
+
+async function compressImageFile(file: File): Promise<ChatAttachment> {
+  const img = await loadImageFromFile(file);
+  const outputType: ImageMimeType = file.type === "image/webp" ? "image/webp" : "image/jpeg";
+
+  for (const maxSide of TARGET_IMAGE_SIZES) {
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    const width = Math.max(1, Math.round(img.width * scale));
+    const height = Math.max(1, Math.round(img.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas is not supported");
+
+    // White background keeps transparent PNG screenshots readable after JPEG compression.
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+
+    for (const quality of JPEG_QUALITIES) {
+      const blob = await canvasToBlob(canvas, outputType, quality);
+      const dataUrl = await blobToDataUrl(blob);
+      const sizeBytes = dataUrlByteSize(dataUrl);
+
+      if (sizeBytes <= MAX_COMPRESSED_IMAGE_BYTES) {
+        return {
+          type: "image",
+          name: safeImageName(file.name, outputType),
+          mimeType: outputType,
+          sizeBytes,
+          dataUrl,
+        };
+      }
+    }
+  }
+
+  throw new Error("Image is still too large after compression");
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -77,6 +170,7 @@ export default function AssistantPage() {
   const [inputValue, setInputValue] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [sending, setSending] = useState(false);
+  const [processingImages, setProcessingImages] = useState(false);
 
   // ── Refs ─────────────────────────────────────────────────────────────────
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -173,34 +267,36 @@ export default function AssistantPage() {
     }
 
     const nextAttachments: ChatAttachment[] = [];
+    setProcessingImages(true);
+    const loadingToast = toast.loading("Preparing image for AI analysis...");
 
-    for (const file of acceptedFiles) {
-      if (!isAllowedImageType(file.type)) {
-        toast.error(`${file.name} is not supported. Use JPG, PNG or WebP.`);
-        continue;
-      }
+    try {
+      for (const file of acceptedFiles) {
+        if (!isAllowedImageType(file.type)) {
+          toast.error(`${file.name} is not supported. Use JPG, PNG or WebP.`);
+          continue;
+        }
 
-      if (file.size > MAX_IMAGE_SIZE_BYTES) {
-        toast.error(`${file.name} is too large. Max size is 5MB.`);
-        continue;
-      }
+        if (file.size > MAX_SOURCE_IMAGE_BYTES) {
+          toast.error(`${file.name} is too large. Use an image under 10MB.`);
+          continue;
+        }
 
-      try {
-        const dataUrl = await readFileAsDataUrl(file);
-        nextAttachments.push({
-          type: "image",
-          name: file.name,
-          mimeType: file.type,
-          sizeBytes: file.size,
-          dataUrl,
-        });
-      } catch {
-        toast.error(`Unable to read ${file.name}.`);
+        try {
+          const compressed = await compressImageFile(file);
+          nextAttachments.push(compressed);
+        } catch {
+          toast.error(`${file.name} could not be compressed enough. Try a smaller screenshot.`);
+        }
       }
+    } finally {
+      toast.dismiss(loadingToast);
+      setProcessingImages(false);
     }
 
     if (nextAttachments.length > 0) {
       setAttachments((prev) => [...prev, ...nextAttachments]);
+      toast.success(`${nextAttachments.length} image(s) ready for analysis.`);
     }
 
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -217,7 +313,7 @@ export default function AssistantPage() {
     const text = inputValue.trim();
     const outgoingAttachments = attachments;
 
-    if ((!text && outgoingAttachments.length === 0) || sending) return;
+    if ((!text && outgoingAttachments.length === 0) || sending || processingImages) return;
 
     setSending(true);
 
@@ -377,7 +473,7 @@ export default function AssistantPage() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto py-1">
+          <div className="min-h-0 flex-1 overflow-y-auto py-1">
             {loadingConversations ? (
               <p className="px-3 py-2 text-[11px] text-slate-500">
                 {t("loading") || "Loading..."}
@@ -485,7 +581,7 @@ export default function AssistantPage() {
                     <button
                       type="button"
                       onClick={() => removeAttachment(index)}
-                      disabled={sending}
+                      disabled={sending || processingImages}
                       className="absolute right-1 top-1 rounded-full bg-slate-950/80 px-1.5 text-[10px] text-slate-100 hover:bg-red-500"
                       title="Remove image"
                     >
@@ -508,7 +604,7 @@ export default function AssistantPage() {
 
               <button
                 type="button"
-                disabled={sending || attachments.length >= MAX_IMAGE_ATTACHMENTS}
+                disabled={sending || processingImages || attachments.length >= MAX_IMAGE_ATTACHMENTS}
                 onClick={() => fileInputRef.current?.click()}
                 className="h-9 w-9 shrink-0 rounded-xl border border-slate-700 bg-slate-900 text-slate-200 hover:border-emerald-500 hover:text-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                 title="Attach image"
@@ -526,18 +622,20 @@ export default function AssistantPage() {
                   }
                 }}
                 placeholder={
-                  t("typeYourMessage") ||
-                  "Type a message or attach an image… (Enter to send)"
+                  processingImages
+                    ? "Preparing image..."
+                    : t("typeYourMessage") ||
+                      "Type a message or attach an image… (Enter to send)"
                 }
                 rows={1}
                 maxLength={4000}
-                disabled={sending}
+                disabled={sending || processingImages}
                 className="min-h-[36px] flex-1 resize-none rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/60 disabled:opacity-60"
                 style={{ maxHeight: "8rem", overflowY: "auto" }}
               />
               <button
                 type="submit"
-                disabled={sending || !canSend}
+                disabled={sending || processingImages || !canSend}
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-base text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                 title={t("send") || "Send"}
               >
@@ -545,7 +643,7 @@ export default function AssistantPage() {
               </button>
             </div>
             <p className="text-[10px] text-slate-500">
-              JPG, PNG or WebP. Up to {MAX_IMAGE_ATTACHMENTS} images, 5MB each.
+              JPG, PNG or WebP. Up to {MAX_IMAGE_ATTACHMENTS} compressed images.
             </p>
           </form>
         </div>

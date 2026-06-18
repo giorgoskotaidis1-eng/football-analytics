@@ -37,8 +37,6 @@ const allowedImageMimeTypes = ["image/jpeg", "image/png", "image/webp"] as const
 const MAX_IMAGE_ATTACHMENTS = 3;
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 
-type ChatAttachmentInput = z.infer<typeof imageAttachmentSchema>;
-
 const imageAttachmentSchema = z.object({
   type: z.literal("image"),
   name: z.string().trim().min(1).max(160),
@@ -52,6 +50,8 @@ const imageAttachmentSchema = z.object({
       "Invalid image data"
     ),
 });
+
+type ChatAttachmentInput = z.infer<typeof imageAttachmentSchema>;
 
 const sendMessageSchema = z
   .object({

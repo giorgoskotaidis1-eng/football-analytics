@@ -140,11 +140,11 @@ export default function AssistantPage() {
         setActiveConversationId(data.conversationId);
         await loadConversations();
       } else {
-        // Update the conversation's updatedAt in the sidebar
+        // Update the conversation's updatedAt in the sidebar (no count — avoid stale state)
         setConversations((prev) =>
           prev.map((c) =>
             c.id === activeConversationId
-              ? { ...c, updatedAt: new Date().toISOString(), messageCount: c.messageCount + 2 }
+              ? { ...c, updatedAt: new Date().toISOString() }
               : c
           )
         );

@@ -74,7 +74,8 @@ function scoreRelevance(
   summary: string,
   query: string,
   importanceScore: number,
-  createdAt: Date
+  createdAt: Date,
+  now: number
 ): number {
   // Tokenise query: only terms longer than 2 characters
   const queryTerms = query
@@ -92,7 +93,7 @@ function scoreRelevance(
 
   // Recency: exponential decay over 30-day half-life
   const ageDays =
-    (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+    (now - createdAt.getTime()) / (1000 * 60 * 60 * 24);
   const recency = Math.exp(-ageDays / 30);
 
   return overlap * 0.6 + (importanceScore / 10) * 0.25 + recency * 0.15;
@@ -124,6 +125,9 @@ export async function getRelevantMemories(
 
   if (candidates.length === 0) return [];
 
+  // Pre-compute current timestamp once to avoid repeated Date.now() calls
+  const now = Date.now();
+
   // Score, sort descending, and return top N
   return candidates
     .map((item) => ({
@@ -133,7 +137,8 @@ export async function getRelevantMemories(
         item.summary,
         query,
         item.importanceScore,
-        item.createdAt
+        item.createdAt,
+        now
       ),
     }))
     .sort((a, b) => b.score - a.score)

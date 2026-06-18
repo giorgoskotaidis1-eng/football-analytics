@@ -128,7 +128,7 @@ function buildDemoReply(params: {
   const hasAttachments = attachments.length > 0;
 
   return [
-    "🟡 Demo mode is active. The assistant UI, conversations, image upload plumbing, and database memory plumbing are working, but no real AI model is being called yet.",
+    "🟡 Demo mode is active. The assistant UI, conversations, image upload plumbing, app guidance plumbing, and database memory plumbing are working, but no real AI model is being called yet.",
     "",
     newUserMessage ? `Your message was: “${newUserMessage}”` : "Your message had no text.",
     hasAttachments ? `You attached ${attachments.length} image(s). Real visual analysis starts after OPENAI_API_KEY is configured.` : "",
@@ -136,6 +136,7 @@ function buildDemoReply(params: {
     "What will happen after you add OPENAI_API_KEY:",
     "- this same chat will call the real OpenAI model",
     "- uploaded screenshots/photos will be sent to the model for visual analysis",
+    "- the assistant will guide users inside the app using route/feature context",
     "- previous conversation messages will be used as context",
     "- useful long-term memories will be saved per user",
     "- the assistant will give football analytics answers instead of this demo response",
@@ -163,7 +164,6 @@ function buildSystemContent(systemInstructions: string, memories: MemoryContext[
 }
 
 function buildResponsesTextInput(
-  systemContent: string,
   history: ChatMessage[],
   newUserMessage: string
 ): string {
@@ -172,27 +172,21 @@ function buildResponsesTextInput(
     .join("\n");
 
   return [
-    `SYSTEM:\n${systemContent}`,
-    transcript ? `\nRECENT CHAT HISTORY:\n${transcript}` : "",
-    `\nUSER:\n${newUserMessage}`,
+    transcript ? `RECENT CHAT HISTORY:\n${transcript}` : "",
+    `USER:\n${newUserMessage}`,
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
 }
 
 function buildResponsesMultimodalInput(params: {
-  systemContent: string;
   history: ChatMessage[];
   newUserMessage: string;
   attachments: ImageAttachmentInput[];
 }) {
-  const { systemContent, history, newUserMessage, attachments } = params;
+  const { history, newUserMessage, attachments } = params;
 
   return [
-    {
-      role: "system",
-      content: [{ type: "input_text", text: systemContent }],
-    },
     ...history
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({
@@ -323,15 +317,15 @@ export async function generateAssistantReply(params: {
     if (shouldUseResponsesApi(model)) {
       const response = await (client.responses as any).create({
         model,
+        instructions: systemContent,
         input:
           attachments.length > 0
             ? buildResponsesMultimodalInput({
-                systemContent,
                 history,
                 newUserMessage,
                 attachments,
               })
-            : buildResponsesTextInput(systemContent, history, newUserMessage),
+            : buildResponsesTextInput(history, newUserMessage),
         max_output_tokens: 1024,
       });
 

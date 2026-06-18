@@ -15,7 +15,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getCurrentUser } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateAssistantReply } from "@/lib/ai/chat";
 import { getRelevantMemories, maybeSummarizeConversation } from "@/lib/ai/memory";
@@ -27,6 +27,8 @@ export const dynamic = "force-dynamic";
 const HISTORY_LIMIT = 12;
 // How many memory items to retrieve
 const MEMORY_LIMIT = 5;
+// Cap memory retrieval wait so non-critical memory DB issues do not block chat.
+const MEMORY_TIMEOUT_MS = 1200;
 // Max characters for auto-generated conversation title from first message
 const MAX_CONVERSATION_TITLE_LENGTH = 60;
 
@@ -43,13 +45,14 @@ Never reveal, store, or repeat passwords, API keys, tokens, or any sensitive per
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
+    const session = await getSession();
+    if (!session) {
       return NextResponse.json(
         { ok: false, message: "Unauthorized" },
         { status: 401 }
       );
     }
+    const userId = session.userId;
 
     const body = (await request.json().catch(() => null)) as unknown;
     const parsed = sendMessageSchema.safeParse(body);
@@ -70,7 +73,7 @@ export async function POST(request: NextRequest) {
         select: { id: true, userId: true },
       });
       // 404 for both missing AND other-user conversations (no info leakage)
-      if (!existing || existing.userId !== user.id) {
+      if (!existing || existing.userId !== userId) {
         return NextResponse.json(
           { ok: false, message: "Conversation not found" },
           { status: 404 }
@@ -79,17 +82,21 @@ export async function POST(request: NextRequest) {
       conversationId = existing.id;
 
       // Touch updatedAt so the conversation list stays sorted by activity
-      await prisma.conversation.update({
-        where: { id: conversationId },
-        data: { updatedAt: new Date() },
-      });
+      try {
+        await prisma.conversation.update({
+          where: { id: conversationId },
+          data: { updatedAt: new Date() },
+        });
+      } catch (err) {
+        console.error("[api/chat] conversation touch failed:", err);
+      }
     } else {
       // Create a new conversation titled from the first message
       const title =
         newMessage.slice(0, MAX_CONVERSATION_TITLE_LENGTH) +
         (newMessage.length > MAX_CONVERSATION_TITLE_LENGTH ? "…" : "");
       const created = await prisma.conversation.create({
-        data: { userId: user.id, title },
+        data: { userId, title },
       });
       conversationId = created.id;
     }
@@ -109,19 +116,34 @@ export async function POST(request: NextRequest) {
     });
     historyMessages.reverse(); // oldest → newest (chronological order for AI)
 
-    await prisma.chatMessage.create({
-      data: {
-        userId: user.id,
-        conversationId,
-        role: "user",
-        content: newMessage,
-      },
-    });
+    try {
+      await prisma.chatMessage.create({
+        data: {
+          userId,
+          conversationId,
+          role: "user",
+          content: newMessage,
+        },
+      });
+    } catch (err) {
+      console.error("[api/chat] user message persist failed:", err);
+    }
 
     // ── Step 5: Fetch relevant memories for this user ─────────────────────────
     let memories: Awaited<ReturnType<typeof getRelevantMemories>> = [];
     try {
-      memories = await getRelevantMemories(user.id, newMessage, MEMORY_LIMIT);
+      const memoryFetch = getRelevantMemories(userId, newMessage, MEMORY_LIMIT).catch(
+        (err) => {
+          console.error("[api/chat] getRelevantMemories error:", err);
+          return [];
+        }
+      );
+      const timeoutFallback = new Promise<
+        Awaited<ReturnType<typeof getRelevantMemories>>
+      >((resolve) => {
+        setTimeout(() => resolve([]), MEMORY_TIMEOUT_MS);
+      });
+      memories = await Promise.race([memoryFetch, timeoutFallback]);
     } catch (err) {
       console.error("[api/chat] getRelevantMemories error:", err);
     }
@@ -146,21 +168,36 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Step 8: Save assistant message ───────────────────────────────────────
-    const assistantMsg = await prisma.chatMessage.create({
-      data: {
-        userId: user.id,
-        conversationId,
+    let assistantMsg: { id: number | null; role: "assistant"; content: string; createdAt: Date };
+    try {
+      const persisted = await prisma.chatMessage.create({
+        data: {
+          userId,
+          conversationId,
+          role: "assistant",
+          content: assistantText,
+        },
+      });
+      assistantMsg = {
+        id: persisted.id,
+        role: "assistant",
+        content: persisted.content,
+        createdAt: persisted.createdAt,
+      };
+    } catch (err) {
+      console.error("[api/chat] assistant message persist failed:", err);
+      assistantMsg = {
+        id: null,
         role: "assistant",
         content: assistantText,
-      },
-    });
+        createdAt: new Date(),
+      };
+    }
 
     // ── Step 9: Maybe summarise for memory (non-fatal) ────────────────────────
-    try {
-      await maybeSummarizeConversation(user.id, conversationId);
-    } catch (err) {
+    void maybeSummarizeConversation(userId, conversationId).catch((err) => {
       console.error("[api/chat] maybeSummarizeConversation error:", err);
-    }
+    });
 
     // ── Step 10: Return response ──────────────────────────────────────────────
     return NextResponse.json({

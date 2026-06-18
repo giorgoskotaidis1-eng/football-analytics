@@ -2,23 +2,24 @@
  * GET /api/chat/conversations — List the current user's conversations.
  */
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) {
+  const session = await getSession();
+  if (!session) {
     return NextResponse.json(
       { ok: false, message: "Unauthorized" },
       { status: 401 }
     );
   }
+  const userId = session.userId;
 
   const conversations = await prisma.conversation.findMany({
-    where: { userId: user.id },
+    where: { userId },
     orderBy: { updatedAt: "desc" },
     take: 100,
     select: {

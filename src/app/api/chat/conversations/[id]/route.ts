@@ -5,7 +5,7 @@
  * Both operations are strictly scoped to the authenticated user.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -21,13 +21,14 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = await getCurrentUser();
-  if (!user) {
+  const session = await getSession();
+  if (!session) {
     return NextResponse.json(
       { ok: false, message: "Unauthorized" },
       { status: 401 }
     );
   }
+  const userId = session.userId;
 
   const { id: rawId } = await params;
   const id = parseId(rawId);
@@ -44,7 +45,7 @@ export async function GET(
   });
 
   // Return 404 for both missing and other-user's conversations (no info leakage)
-  if (!conversation || conversation.userId !== user.id) {
+  if (!conversation || conversation.userId !== userId) {
     return NextResponse.json(
       { ok: false, message: "Conversation not found" },
       { status: 404 }
@@ -73,13 +74,14 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = await getCurrentUser();
-  if (!user) {
+  const session = await getSession();
+  if (!session) {
     return NextResponse.json(
       { ok: false, message: "Unauthorized" },
       { status: 401 }
     );
   }
+  const userId = session.userId;
 
   const { id: rawId } = await params;
   const id = parseId(rawId);
@@ -95,7 +97,7 @@ export async function DELETE(
     select: { id: true, userId: true },
   });
 
-  if (!conversation || conversation.userId !== user.id) {
+  if (!conversation || conversation.userId !== userId) {
     return NextResponse.json(
       { ok: false, message: "Conversation not found" },
       { status: 404 }

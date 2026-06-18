@@ -6,23 +6,24 @@
  * All operations are strictly scoped to the authenticated user.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) {
+  const session = await getSession();
+  if (!session) {
     return NextResponse.json(
       { ok: false, message: "Unauthorized" },
       { status: 401 }
     );
   }
+  const userId = session.userId;
 
   const memories = await prisma.memoryItem.findMany({
-    where: { userId: user.id },
+    where: { userId },
     orderBy: [{ importanceScore: "desc" }, { createdAt: "desc" }],
     select: {
       id: true,
@@ -37,23 +38,24 @@ export async function GET() {
 }
 
 export async function DELETE(request: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) {
+  const session = await getSession();
+  if (!session) {
     return NextResponse.json(
       { ok: false, message: "Unauthorized" },
       { status: 401 }
     );
   }
+  const userId = session.userId;
 
   const url = new URL(request.url);
   const deleteAll = url.searchParams.get("all") === "true";
 
   // Always delete MemoryItems
-  await prisma.memoryItem.deleteMany({ where: { userId: user.id } });
+  await prisma.memoryItem.deleteMany({ where: { userId } });
 
   if (deleteAll) {
     // Also wipe all conversations (ChatMessages cascade via FK)
-    await prisma.conversation.deleteMany({ where: { userId: user.id } });
+    await prisma.conversation.deleteMany({ where: { userId } });
   }
 
   return NextResponse.json({

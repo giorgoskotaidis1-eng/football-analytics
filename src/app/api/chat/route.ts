@@ -27,6 +27,8 @@ export const dynamic = "force-dynamic";
 const HISTORY_LIMIT = 12;
 // How many memory items to retrieve
 const MEMORY_LIMIT = 5;
+// Max characters for auto-generated conversation title from first message
+const MAX_CONVERSATION_TITLE_LENGTH = 60;
 
 const sendMessageSchema = z.object({
   conversationId: z.number().int().positive().optional(),
@@ -83,7 +85,8 @@ export async function POST(request: NextRequest) {
   } else {
     // Create a new conversation titled from the first message
     const title =
-      newMessage.slice(0, 60) + (newMessage.length > 60 ? "…" : "");
+      newMessage.slice(0, MAX_CONVERSATION_TITLE_LENGTH) +
+      (newMessage.length > MAX_CONVERSATION_TITLE_LENGTH ? "…" : "");
     const created = await prisma.conversation.create({
       data: { userId: user.id, title },
     });

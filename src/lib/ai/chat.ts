@@ -24,6 +24,10 @@ export interface MemoryContext {
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
+/**
+ * Default model used when OPENAI_MODEL env var is not set.
+ * Override at runtime by setting process.env.OPENAI_MODEL.
+ */
 const DEFAULT_MODEL = "gpt-4o-mini";
 
 let _client: OpenAI | null = null;

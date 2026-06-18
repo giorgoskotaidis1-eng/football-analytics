@@ -230,7 +230,7 @@ export async function maybeSummarizeConversation(
       userId,
       summary,
       sourceMessageIds: JSON.stringify(messages.map((m) => m.id)),
-      importanceScore: 5, // TODO: adjust via user feedback mechanism (future enhancement)
+      importanceScore: 5, // mid-range default (0–10 scale)
     },
   });
 }

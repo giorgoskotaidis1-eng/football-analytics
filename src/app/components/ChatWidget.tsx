@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import toast, { Toaster } from "react-hot-toast";
 import { useTranslation } from "@/lib/i18n";
 
@@ -27,6 +28,7 @@ interface Conversation {
 
 export function ChatWidget() {
   const { t } = useTranslation();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
 
   // ── Conversations ────────────────────────────────────────────────────────
@@ -45,12 +47,21 @@ export function ChatWidget() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const handleUnauthorized = useCallback(() => {
+    toast.error(t("sessionExpiredPleaseLogin") || "Session expired. Please sign in again.");
+    router.push("/auth/login");
+  }, [router, t]);
+
   // ─── Load conversations ──────────────────────────────────────────────────
   const loadConversations = useCallback(async () => {
     setLoadingConversations(true);
     try {
       const res = await fetch("/api/chat/conversations");
       const data = await res.json().catch(() => null);
+      if (res.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       if (!res.ok || !data?.ok) return;
       setConversations(Array.isArray(data.conversations) ? data.conversations : []);
     } catch {
@@ -58,8 +69,7 @@ export function ChatWidget() {
     } finally {
       setLoadingConversations(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleUnauthorized]);
 
   // Load conversations when widget opens for the first time
   useEffect(() => {
@@ -84,17 +94,21 @@ export function ChatWidget() {
     try {
       const res = await fetch(`/api/chat/conversations/${id}`);
       const data = await res.json().catch(() => null);
+      if (res.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       if (!res.ok || !data?.ok) {
-        toast.error(data?.message || "Failed to load messages");
+        toast.error(data?.message || t("failedToLoadMessages") || "Failed to load messages");
         return;
       }
       setMessages(Array.isArray(data.messages) ? data.messages : []);
     } catch {
-      toast.error("An error occurred");
+      toast.error(t("anErrorOccurred") || "An error occurred");
     } finally {
       setLoadingMessages(false);
     }
-  }, []);
+  }, [handleUnauthorized, t]);
 
   // ─── New conversation ────────────────────────────────────────────────────
   function startNewConversation() {
@@ -118,6 +132,7 @@ export function ChatWidget() {
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
@@ -126,9 +141,16 @@ export function ChatWidget() {
       });
       const data = await res.json().catch(() => null);
 
+      if (res.status === 401) {
+        setMessages((prev) => prev.slice(0, -1));
+        setInputValue(text);
+        handleUnauthorized();
+        return;
+      }
+
       if (!res.ok || !data?.ok) {
         setMessages((prev) => prev.slice(0, -1));
-        toast.error(data?.message || "Failed to send message");
+        toast.error(data?.message || t("failedToSendMessage") || "Failed to send message");
         setInputValue(text);
         return;
       }
@@ -145,7 +167,7 @@ export function ChatWidget() {
       }
     } catch {
       setMessages((prev) => prev.slice(0, -1));
-      toast.error("An error occurred");
+      toast.error(t("anErrorOccurred") || "An error occurred");
       setInputValue(text);
     } finally {
       setSending(false);
@@ -154,36 +176,51 @@ export function ChatWidget() {
 
   // ─── Delete conversation ─────────────────────────────────────────────────
   async function handleDeleteConversation(id: number) {
-    if (!confirm("Delete this conversation?")) return;
+    if (!confirm(t("confirmDeleteConversation") || "Delete this conversation?")) return;
     try {
       const res = await fetch(`/api/chat/conversations/${id}`, { method: "DELETE" });
       const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) {
-        toast.error(data?.message || "Failed to delete");
+      if (res.status === 401) {
+        handleUnauthorized();
         return;
       }
+      if (!res.ok || !data?.ok) {
+        toast.error(data?.message || t("failedToDelete") || "Failed to delete");
+        return;
+      }
+      toast.success(t("conversationDeleted") || "Conversation deleted");
       if (activeConversationId === id) startNewConversation();
       await loadConversations();
     } catch {
-      toast.error("An error occurred");
+      toast.error(t("anErrorOccurred") || "An error occurred");
     }
   }
 
   // ─── Clear all ───────────────────────────────────────────────────────────
   async function handleClearAll() {
-    if (!confirm("Clear all chat history and AI memory? This cannot be undone.")) return;
+    if (
+      !confirm(
+        t("confirmClearAll") ||
+          "Clear all chat history and AI memory? This cannot be undone."
+      )
+    )
+      return;
     try {
       const res = await fetch("/api/chat/memories?all=true", { method: "DELETE" });
       const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) {
-        toast.error(data?.message || "Failed to clear memory");
+      if (res.status === 401) {
+        handleUnauthorized();
         return;
       }
-      toast.success("History and memory cleared");
+      if (!res.ok || !data?.ok) {
+        toast.error(data?.message || t("failedToClearMemory") || "Failed to clear memory");
+        return;
+      }
+      toast.success(t("memoryClearedAll") || "History and memory cleared");
       startNewConversation();
       await loadConversations();
     } catch {
-      toast.error("An error occurred");
+      toast.error(t("anErrorOccurred") || "An error occurred");
     }
   }
 
@@ -195,7 +232,7 @@ export function ChatWidget() {
       {/* Floating toggle button */}
       <button
         onClick={() => setOpen((v) => !v)}
-        aria-label={open ? "Close AI Assistant" : "Open AI Assistant"}
+        aria-label={open ? t("closeAiAssistant") || "Close AI Assistant" : t("openAiAssistant") || "Open AI Assistant"}
         className="fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-xl shadow-lg ring-2 ring-emerald-400/40 transition hover:bg-emerald-400 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-emerald-500/50"
       >
         {open ? "✕" : "🤖"}
@@ -220,7 +257,7 @@ export function ChatWidget() {
               <button
                 onClick={() => setShowConvList((v) => !v)}
                 className="rounded-md px-2 py-1 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                title="Conversation history"
+                title={t("conversationHistory") || "Conversation history"}
               >
                 🕐
               </button>
@@ -228,9 +265,9 @@ export function ChatWidget() {
               <button
                 onClick={startNewConversation}
                 className="rounded-md px-2 py-1 text-[10px] font-semibold text-emerald-400 hover:bg-slate-800"
-                title="New chat"
+                title={t("newChat") || "New chat"}
               >
-                + New
+                + {t("new") || "New"}
               </button>
             </div>
           </div>
@@ -240,9 +277,9 @@ export function ChatWidget() {
             <div className="flex flex-1 flex-col overflow-hidden bg-slate-950">
               <div className="flex-1 overflow-y-auto py-1">
                 {loadingConversations ? (
-                  <p className="px-3 py-2 text-[11px] text-slate-500">Loading…</p>
+                  <p className="px-3 py-2 text-[11px] text-slate-500">{t("loading") || "Loading..."}</p>
                 ) : conversations.length === 0 ? (
-                  <p className="px-3 py-2 text-[11px] text-slate-500">No conversations yet.</p>
+                  <p className="px-3 py-2 text-[11px] text-slate-500">{t("noConversationsYet") || "No conversations yet."}</p>
                 ) : (
                   conversations.map((conv) => (
                     <div
@@ -255,7 +292,7 @@ export function ChatWidget() {
                       onClick={() => void openConversation(conv.id)}
                     >
                       <span className="min-w-0 flex-1 truncate text-[11px] text-slate-300">
-                        {conv.title || "Untitled chat"}
+                        {conv.title || t("untitledChat") || "Untitled chat"}
                       </span>
                       <button
                         onClick={(e) => {
@@ -263,7 +300,7 @@ export function ChatWidget() {
                           void handleDeleteConversation(conv.id);
                         }}
                         className="hidden shrink-0 text-[10px] text-slate-500 hover:text-red-400 group-hover:block"
-                        title="Delete"
+                        title={t("delete") || "Delete"}
                       >
                         ✕
                       </button>
@@ -276,7 +313,7 @@ export function ChatWidget() {
                   onClick={() => void handleClearAll()}
                   className="w-full rounded-md border border-slate-700 px-2 py-1.5 text-[10px] text-slate-400 hover:border-red-500/50 hover:text-red-400"
                 >
-                  Clear all history &amp; memory
+                  {t("clearAllMemory") || "Clear all history & memory"}
                 </button>
               </div>
             </div>
@@ -288,16 +325,16 @@ export function ChatWidget() {
                   <div className="flex h-full flex-col items-center justify-center text-center">
                     <span className="text-3xl">🤖</span>
                     <p className="mt-2 text-[12px] font-medium text-slate-300">
-                      How can I help you today?
+                      {t("assistantWelcome") || "How can I help you today?"}
                     </p>
                     <p className="mt-1 text-[10px] text-slate-500">
-                      Ask about stats, tactics or match data.
+                      {t("assistantExamples") || "Ask about stats, tactics or match data."}
                     </p>
                   </div>
                 )}
 
                 {loadingMessages && (
-                  <p className="text-center text-[11px] text-slate-500">Loading…</p>
+                  <p className="text-center text-[11px] text-slate-500">{t("loading") || "Loading..."}</p>
                 )}
 
                 {messages.map((msg, idx) => (
@@ -330,7 +367,7 @@ export function ChatWidget() {
                       void handleSend(e as unknown as FormEvent);
                     }
                   }}
-                  placeholder="Type a message… (Enter to send)"
+                  placeholder={t("typeYourMessage") || "Type a message… (Enter to send)"}
                   rows={1}
                   maxLength={4000}
                   disabled={sending}
@@ -341,7 +378,7 @@ export function ChatWidget() {
                   type="submit"
                   disabled={sending || !inputValue.trim()}
                   className="h-8 w-8 shrink-0 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center"
-                  title="Send"
+                  title={t("send") || "Send"}
                 >
                   ↑
                 </button>
